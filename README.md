@@ -96,7 +96,7 @@ Prepare [ImageNet-A](https://github.com/hendrycks/natural-adv-examples), [ImageN
 
 
 
-- For pre-trained AS-MLP-B model on ImageNet-1K, you can manually download them from [AS-MLP](https://github.com/svip-lab/AS-MLP)
+- For pre-trained AS-MLP-B model on ImageNet-1K, you can manually download them from [AS-MLP](https://github.com/svip-lab/AS-MLP).
 
 
 
