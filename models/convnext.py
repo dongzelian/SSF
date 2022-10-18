@@ -125,35 +125,23 @@ class Mlp(nn.Module):
 
         self.tuning_mode = tuning_mode
         if tuning_mode == 'ssf':        
-            # add scale and shift
-            self.ssf_scale_1 = nn.Parameter(torch.ones(hidden_features)) 
-            self.ssf_scale_2 = nn.Parameter(torch.ones(out_features))
-
-            self.ssf_shift_1 = nn.Parameter(torch.zeros(hidden_features))
-            self.ssf_shift_2 = nn.Parameter(torch.zeros(out_features))
-
-            # normal init
-            nn.init.normal_(self.ssf_scale_1, mean=1, std=.02)
-            nn.init.normal_(self.ssf_scale_2, mean=1, std=.02)
-
-            nn.init.normal_(self.ssf_shift_1, std=.02)
-            nn.init.normal_(self.ssf_shift_2, std=.02)
+            self.ssf_scale_1, self.ssf_shift_1 = init_ssf_scale_shift(hidden_features)
+            self.ssf_scale_2, self.ssf_shift_2 = init_ssf_scale_shift(out_features)
         
 
     def forward(self, x):
+        x = self.fc1(x)
         if self.tuning_mode == 'ssf':
-            x = self.fc1(x) * self.ssf_scale_1 + self.ssf_shift_1
-        else:
-            x = self.fc1(x)
+            x = ssf_ada(x, self.ssf_scale_1, self.ssf_shift_1)
+
         x = self.act(x)
         x = self.drop1(x)
+        x = self.fc2(x) 
         if self.tuning_mode == 'ssf':
-            x = self.fc2(x) * self.ssf_scale_2 + self.ssf_shift_2
-        else:
-            x = self.fc2(x) 
-        
-        x = self.drop2(x)
+            x = ssf_ada(x, self.ssf_scale_2, self.ssf_shift_2)
 
+        x = self.drop2(x)
+        
         return x
 
 
@@ -190,37 +178,27 @@ class ConvNeXtBlock(nn.Module):
 
         self.tuning_mode = tuning_mode
         if tuning_mode == 'ssf':        
-            # add scale and shift
-            self.ssf_scale_1 = nn.Parameter(torch.ones(dim))
-            self.ssf_scale_2 = nn.Parameter(torch.ones(dim))
-            
-            self.ssf_shift_1 = nn.Parameter(torch.zeros(dim))
-            self.ssf_shift_2 = nn.Parameter(torch.zeros(dim))
+            self.ssf_scale_1, self.ssf_shift_1 = init_ssf_scale_shift(dim)
+            self.ssf_scale_2, self.ssf_shift_2 = init_ssf_scale_shift(dim)
 
-            # normal init
-            nn.init.normal_(self.ssf_scale_1, mean=1, std=.02)
-            nn.init.normal_(self.ssf_scale_2, mean=1, std=.02)
-
-            nn.init.normal_(self.ssf_shift_1, std=.02)
-            nn.init.normal_(self.ssf_shift_2, std=.02)
 
 
 
     def forward(self, x):
         shortcut = x
+        x = self.conv_dw(x)
         if self.tuning_mode == 'ssf':
-            x = self.conv_dw(x) * self.ssf_scale_1.view(1, -1, 1, 1) + self.ssf_shift_1.view(1, -1, 1, 1)
-        else:
-            x = self.conv_dw(x)
+            x = ssf_ada(x, self.ssf_scale_1, self.ssf_shift_1)
+
         if self.use_conv_mlp:
             x = self.norm(x)
             x = self.mlp(x)
         else:
             x = x.permute(0, 2, 3, 1)
+            x = self.norm(x)
             if self.tuning_mode == 'ssf':
-                x = self.norm(x) * self.ssf_scale_2 + self.ssf_shift_2
-            else:
-                x = self.norm(x)
+                x = ssf_ada(x, self.ssf_scale_2, self.ssf_shift_2)
+
             x = self.mlp(x)
             x = x.permute(0, 3, 1, 2)
         if self.gamma is not None:
@@ -241,25 +219,14 @@ class Downsample(nn.Module):
 
         self.tuning_mode = tuning_mode
         if tuning_mode == 'ssf':     
-            # add scale and shift
-            self.ssf_scale_1 = nn.Parameter(torch.ones(dim))
-            self.ssf_scale_2 = nn.Parameter(torch.ones(out_dim))
-            
-            self.ssf_shift_1 = nn.Parameter(torch.zeros(dim))
-            self.ssf_shift_2 = nn.Parameter(torch.zeros(out_dim))
-
-            # normal init
-            nn.init.normal_(self.ssf_scale_1, mean=1, std=.02)
-            nn.init.normal_(self.ssf_scale_2, mean=1, std=.02)
-
-            nn.init.normal_(self.ssf_shift_1, std=.02)
-            nn.init.normal_(self.ssf_shift_2, std=.02)
+            self.ssf_scale_1, self.ssf_shift_1 = init_ssf_scale_shift(dim)
+            self.ssf_scale_2, self.ssf_shift_2 = init_ssf_scale_shift(out_dim)
 
 
     def forward(self, x):
         if self.tuning_mode == 'ssf':  
-            x = self.norm(x) * self.ssf_scale_1.view(1, -1, 1, 1) + self.ssf_shift_1.view(1, -1, 1, 1)
-            x = self.proj(x) * self.ssf_scale_2.view(1, -1, 1, 1) + self.ssf_shift_2.view(1, -1, 1, 1)
+            x = ssf_ada(self.norm(x), self.ssf_scale_1, self.ssf_shift_1)
+            x = ssf_ada(self.proj(x), self.ssf_scale_2, self.ssf_shift_2)
         else:
             x = self.norm(x)
             x = self.proj(x)
@@ -310,31 +277,39 @@ class PatchEmbed(nn.Module):
 
         self.tuning_mode = tuning_mode
         if tuning_mode == 'ssf':     
-            # add scale and shift
-            self.ssf_scale_1 = nn.Parameter(torch.ones(embed_dim))
-            self.ssf_scale_2 = nn.Parameter(torch.ones(embed_dim))
-            
-            self.ssf_shift_1 = nn.Parameter(torch.zeros(embed_dim))
-            self.ssf_shift_2 = nn.Parameter(torch.zeros(embed_dim))
-
-            # normal init
-            nn.init.normal_(self.ssf_scale_1, mean=1, std=.02)
-            nn.init.normal_(self.ssf_scale_2, mean=1, std=.02)
-
-            nn.init.normal_(self.ssf_shift_1, std=.02)
-            nn.init.normal_(self.ssf_shift_2, std=.02)
+            self.ssf_scale_1, self.ssf_shift_1 = init_ssf_scale_shift(embed_dim)
+            self.ssf_scale_2, self.ssf_shift_2 = init_ssf_scale_shift(embed_dim)
 
 
     def forward(self, x):
         if self.tuning_mode == 'ssf':  
-            x = self.proj(x) * self.ssf_scale_1.view(1, -1, 1, 1) + self.ssf_shift_1.view(1, -1, 1, 1)
-            x = self.norm(x) * self.ssf_scale_2.view(1, -1, 1, 1) + self.ssf_shift_2.view(1, -1, 1, 1)
+            x = ssf_ada(self.proj(x), self.ssf_scale_1, self.ssf_shift_1)
+            x = ssf_ada(self.norm(x), self.ssf_scale_2, self.ssf_shift_2)
         else:
             x = self.proj(x)
             x = self.norm(x)
 
         return x
 
+
+def init_ssf_scale_shift(dim):
+    scale = nn.Parameter(torch.ones(dim))
+    shift = nn.Parameter(torch.zeros(dim))
+
+    nn.init.normal_(scale, mean=1, std=.02)
+    nn.init.normal_(shift, std=.02)
+
+    return scale, shift
+
+
+def ssf_ada(x, scale, shift):
+    assert scale.shape == shift.shape
+    if x.shape[-1] == scale.shape[0]:
+        return x * scale + shift
+    elif x.shape[1] == scale.shape[0]:
+        return x * scale.view(1, -1, 1, 1) + shift.view(1, -1, 1, 1)
+    else:
+        raise ValueError('the input tensor shape does not match the shape of the scale factor.')
 
 
 class ConvNeXt(nn.Module):
@@ -377,13 +352,7 @@ class ConvNeXt(nn.Module):
         self.tuning_mode = tuning_mode
         tuning_mode_list = [[tuning_mode] * depths[i_layer] for i_layer in range(len(depths))]
         if tuning_mode == 'ssf':       
-            # add scale and shift
-            self.ssf_scale_1 = nn.Parameter(torch.ones(dims[3])) 
-            self.ssf_shift_1 = nn.Parameter(torch.zeros(dims[3]))
-
-            # normal init
-            nn.init.normal_(self.ssf_scale_1, mean=1, std=.02)
-            nn.init.normal_(self.ssf_shift_1, std=.02)
+            self.ssf_scale_1, self.ssf_shift_1 = init_ssf_scale_shift(dims[3])
 
         self.stages = nn.Sequential()
         dp_rates = [x.tolist() for x in torch.linspace(0, drop_path_rate, sum(depths)).split(depths)]
@@ -449,14 +418,12 @@ class ConvNeXt(nn.Module):
             ]))
 
     def forward_features(self, x):
+        x = self.stem(x)
+        x = self.stages(x)
+        x = self.norm_pre(x)
         if self.tuning_mode == 'ssf':
-            x = self.stem(x)
-            x = self.stages(x)
-            x = self.norm_pre(x) * self.ssf_scale_1.view(1, -1, 1, 1) + self.ssf_shift_1.view(1, -1, 1, 1)
-        else:
-            x = self.stem(x)
-            x = self.stages(x)
-            x = self.norm_pre(x)
+            x = ssf_ada(self.norm_pre(x), self.ssf_scale_1, self.ssf_shift_1)
+
         return x
 
 

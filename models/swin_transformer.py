@@ -110,32 +110,20 @@ class Mlp(nn.Module):
             
         self.tuning_mode = tuning_mode
         if tuning_mode == 'ssf':        
-            # add scale and shift
-            self.ssf_scale_1 = nn.Parameter(torch.ones(hidden_features)) 
-            self.ssf_scale_2 = nn.Parameter(torch.ones(out_features))
-
-            self.ssf_shift_1 = nn.Parameter(torch.zeros(hidden_features))
-            self.ssf_shift_2 = nn.Parameter(torch.zeros(out_features))
-
-            # normal init
-            nn.init.normal_(self.ssf_scale_1, mean=1, std=.02)
-            nn.init.normal_(self.ssf_scale_2, mean=1, std=.02)
-
-            nn.init.normal_(self.ssf_shift_1, std=.02)
-            nn.init.normal_(self.ssf_shift_2, std=.02)
+            self.ssf_scale_1, self.ssf_shift_1 = init_ssf_scale_shift(hidden_features)
+            self.ssf_scale_2, self.ssf_shift_2 = init_ssf_scale_shift(out_features)
 
 
     def forward(self, x):
+        x = self.fc1(x)
         if self.tuning_mode == 'ssf':
-            x = self.fc1(x) * self.ssf_scale_1 + self.ssf_shift_1
-        else:
-            x = self.fc1(x)
+            x = ssf_ada(x, self.ssf_scale_1, self.ssf_shift_1)
+
         x = self.act(x)
         x = self.drop1(x)
+        x = self.fc2(x) 
         if self.tuning_mode == 'ssf':
-            x = self.fc2(x) * self.ssf_scale_2 + self.ssf_shift_2
-        else:
-            x = self.fc2(x) 
+            x = ssf_ada(x, self.ssf_scale_2, self.ssf_shift_2)
         
         x = self.drop2(x)
         
@@ -222,19 +210,8 @@ class WindowAttention(nn.Module):
         self.tuning_mode = tuning_mode
 
         if tuning_mode == 'ssf':     
-            # add scale and shift
-            self.ssf_scale_1 = nn.Parameter(torch.ones(dim * 3))
-            self.ssf_scale_2 = nn.Parameter(torch.ones(dim))
-            
-            self.ssf_shift_1 = nn.Parameter(torch.zeros(dim * 3))
-            self.ssf_shift_2 = nn.Parameter(torch.zeros(dim))
-
-            # normal init
-            nn.init.normal_(self.ssf_scale_1, mean=1, std=.02)
-            nn.init.normal_(self.ssf_scale_2, mean=1, std=.02)
-
-            nn.init.normal_(self.ssf_shift_1, std=.02)
-            nn.init.normal_(self.ssf_shift_2, std=.02)
+            self.ssf_scale_1, self.ssf_shift_1 = init_ssf_scale_shift(dim * 3)
+            self.ssf_scale_2, self.ssf_shift_2 = init_ssf_scale_shift(dim)
 
 
 
@@ -246,7 +223,8 @@ class WindowAttention(nn.Module):
         """
         B_, N, C = x.shape
         if self.tuning_mode == 'ssf':
-            qkv = (self.qkv(x) * self.ssf_scale_1 + self.ssf_shift_1).reshape(B_, N, 3, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
+            #qkv = (self.qkv(x) * self.ssf_scale_1 + self.ssf_shift_1).reshape(B_, N, 3, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
+            qkv = (ssf_ada(self.qkv(x), self.ssf_scale_1, self.ssf_shift_1)).reshape(B_, N, 3, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
         else:
             qkv = self.qkv(x).reshape(B_, N, 3, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
         q, k, v = qkv.unbind(0)  # make torchscript happy (cannot use tensor as tuple)
@@ -272,10 +250,10 @@ class WindowAttention(nn.Module):
 
         x = (attn @ v).transpose(1, 2).reshape(B_, N, C)
         
+        x = self.proj(x)
         if self.tuning_mode == 'ssf':
-            x = self.proj(x) * self.ssf_scale_2 + self.ssf_shift_2
-        else:
-            x = self.proj(x)
+            x = ssf_ada(x, self.ssf_scale_2, self.ssf_shift_2)
+
         x = self.proj_drop(x)
         return x
 
@@ -351,19 +329,8 @@ class SwinTransformerBlock(nn.Module):
         self.tuning_mode = tuning_mode
 
         if tuning_mode == 'ssf':     
-            # add scale and shift
-            self.ssf_scale_1 = nn.Parameter(torch.ones(dim))
-            self.ssf_scale_2 = nn.Parameter(torch.ones(dim))
-
-            self.ssf_shift_1 = nn.Parameter(torch.zeros(dim)) 
-            self.ssf_shift_2 = nn.Parameter(torch.zeros(dim))
-
-            # normal init
-            nn.init.normal_(self.ssf_scale_1, mean=1, std=.02)
-            nn.init.normal_(self.ssf_scale_2, mean=1, std=.02)
-
-            nn.init.normal_(self.ssf_shift_1, std=.02)
-            nn.init.normal_(self.ssf_shift_2, std=.02)
+            self.ssf_scale_1, self.ssf_shift_1 = init_ssf_scale_shift(dim)
+            self.ssf_scale_2, self.ssf_shift_2 = init_ssf_scale_shift(dim)
         
 
     def forward(self, x):
@@ -372,11 +339,10 @@ class SwinTransformerBlock(nn.Module):
 
         shortcut = x
         
+        x = self.norm1(x)
         if self.tuning_mode == 'ssf':
-            x = self.norm1(x) * self.ssf_scale_1 + self.ssf_shift_1
-        else:
-            x = self.norm1(x)
-            
+            x = ssf_ada(x, self.ssf_scale_1, self.ssf_shift_1)
+
         x = x.view(B, H, W, C)
 
         # cyclic shift
@@ -406,7 +372,7 @@ class SwinTransformerBlock(nn.Module):
         # FFN
         x = shortcut + self.drop_path(x)
         if self.tuning_mode == 'ssf':
-            x = x + self.drop_path(self.mlp(self.norm2(x) * self.ssf_scale_2 + self.ssf_shift_2))
+            x = x + self.drop_path(self.mlp(ssf_ada(self.norm2(x), self.ssf_scale_2, self.ssf_shift_2)))
         else:
             x = x + self.drop_path(self.mlp(self.norm2(x)))
 
@@ -429,13 +395,7 @@ class PatchMerging(nn.Module):
         self.norm = norm_layer(4 * dim)
         self.tuning_mode = tuning_mode
         if tuning_mode == 'ssf':     
-            # add scale and shift
-            self.ssf_scale_1 = nn.Parameter(torch.ones(4 * dim))
-            self.ssf_shift_1 = nn.Parameter(torch.zeros(4 * dim))
-
-            # normal init
-            nn.init.normal_(self.ssf_scale_1, mean=1, std=.02)
-            nn.init.normal_(self.ssf_shift_1, std=.02)
+            self.ssf_scale_1, self.ssf_shift_1 = init_ssf_scale_shift(4 * dim)
 
 
     def forward(self, x):
@@ -457,10 +417,10 @@ class PatchMerging(nn.Module):
         x = torch.cat([x0, x1, x2, x3], -1)  # B H/2 W/2 4*C
         x = x.view(B, -1, 4 * C)  # B H/2*W/2 4*C
 
+        x = self.norm(x)
         if self.tuning_mode == 'ssf':
-            x = self.norm(x) * self.ssf_scale_1 + self.ssf_shift_1
-        else:
-            x = self.norm(x)
+            x = ssf_ada(x, self.ssf_scale_1, self.ssf_shift_1)
+
         x = self.reduction(x)
 
         return x
@@ -551,21 +511,10 @@ class PatchEmbed(nn.Module):
 
         self.tuning_mode = tuning_mode
         if tuning_mode == 'ssf':     
-            # add scale and shift
-            self.ssf_scale_1 = nn.Parameter(torch.ones(embed_dim))
-            self.ssf_shift_1 = nn.Parameter(torch.zeros(embed_dim))
-
-            # normal init
-            nn.init.normal_(self.ssf_scale_1, mean=1, std=.02)
-            nn.init.normal_(self.ssf_shift_1, std=.02)
+            self.ssf_scale_1, self.ssf_shift_1 = init_ssf_scale_shift(embed_dim)
 
             if norm_layer:
-                # add scale and shift
-                self.ssf_scale_2 = nn.Parameter(torch.ones(embed_dim))
-                self.ssf_shift_2 = nn.Parameter(torch.zeros(embed_dim))
-                # normal init
-                nn.init.normal_(self.ssf_scale_2, mean=1, std=.02)
-                nn.init.normal_(self.ssf_shift_2, std=.02)
+                self.ssf_scale_2, self.ssf_shift_2 = init_ssf_scale_shift(embed_dim)
 
 
     def forward(self, x):
@@ -577,15 +526,35 @@ class PatchEmbed(nn.Module):
         if self.flatten:
             x = x.flatten(2).transpose(1, 2)  # BCHW -> BNC
         if self.tuning_mode == 'ssf':  
-            x = x * self.ssf_scale_1 + self.ssf_shift_1
+            x = ssf_ada(x, self.ssf_scale_1, self.ssf_shift_1)
             if self.norm_layer:
-                x = self.norm(x) * self.ssf_scale_2 + self.ssf_shift_2
+                x = ssf_ada(self.norm(x), self.ssf_scale_2, self.ssf_shift_2)
             else:
                 x = self.norm(x)
         else:
             x = self.norm(x)
         return x
 
+
+
+def init_ssf_scale_shift(dim):
+    scale = nn.Parameter(torch.ones(dim))
+    shift = nn.Parameter(torch.zeros(dim))
+
+    nn.init.normal_(scale, mean=1, std=.02)
+    nn.init.normal_(shift, std=.02)
+
+    return scale, shift
+
+
+def ssf_ada(x, scale, shift):
+    assert scale.shape == shift.shape
+    if x.shape[-1] == scale.shape[0]:
+        return x * scale + shift
+    elif x.shape[1] == scale.shape[0]:
+        return x * scale.view(1, -1, 1, 1) + shift.view(1, -1, 1, 1)
+    else:
+        raise ValueError('the input tensor shape does not match the shape of the scale factor.')
 
 
 class SwinTransformer(nn.Module):
@@ -649,13 +618,7 @@ class SwinTransformer(nn.Module):
         self.tuning_mode = tuning_mode
         tuning_mode_list = [[tuning_mode] * depths[i_layer] for i_layer in range(self.num_layers)]
         if tuning_mode == 'ssf':   
-            # add scale and shift
-            self.ssf_scale_1 = nn.Parameter(torch.ones(self.num_features))
-            self.ssf_shift_1 = nn.Parameter(torch.zeros(self.num_features))
-
-            # normal init
-            nn.init.normal_(self.ssf_scale_1, mean=1, std=.02)
-            nn.init.normal_(self.ssf_shift_1, std=.02)
+            self.ssf_scale_1, self.ssf_shift_1 = init_ssf_scale_shift(self.num_features)
 
         # build layers
         layers = []
@@ -715,10 +678,10 @@ class SwinTransformer(nn.Module):
             x = x + self.absolute_pos_embed
         x = self.pos_drop(x)
         x = self.layers(x)
+        x = self.norm(x)
+
         if self.tuning_mode == 'ssf': 
-            x = self.norm(x) * self.ssf_scale_1 + self.ssf_shift_1
-        else:  
-            x = self.norm(x)  # B L C
+            x = ssf_ada(x, self.ssf_scale_1, self.ssf_shift_1)
 
         x = self.avgpool(x.transpose(1, 2))  # B C 1
         x = torch.flatten(x, 1)
