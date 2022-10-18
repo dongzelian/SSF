@@ -12,7 +12,7 @@ This repo is the official implementation of our NeurIPS2022 paper "Scaling & Shi
 - Clone this repo:
 
 ```bash
-git clone Phttps://github.com/dongzelian/SSF.git
+git clone https://github.com/dongzelian/SSF.git
 cd SSF
 ```
 
