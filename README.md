@@ -129,7 +129,7 @@ bash train_scripts/vit/imagenet_a(r, c)/eval_ssf.sh
 If this project is helpful for you, you can cite our paper:
 ```
 @InProceedings{Lian_2022_SSF,
-  title={Scaling & Shifting Your Features: A New Baseline for Efficient Model Tuning},
+  title={Scaling \& Shifting Your Features: A New Baseline for Efficient Model Tuning},
   author={Lian, Dongze and Zhou, Daquan and Feng, Jiashi and Wang, Xinchao},
   booktitle={Advances in Neural Information Processing Systems (NeurIPS)},
   year={2022}
