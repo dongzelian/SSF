@@ -1,5 +1,5 @@
 CUDA_VISIBLE_DEVICES=0,1,  python  -m torch.distributed.launch --nproc_per_node=2  --master_port=12319 \
-    train.py /path/to/stanford_dogs  --dataset stanford_dogs --num-classes 120 --simple-aug  --crop-pct 1   --model vit_base_patch16_224_in21k  \
+    train.py /path/to/stanford_dogs  --dataset stanford_dogs --num-classes 120 --simple-aug    --model vit_base_patch16_224_in21k  \
     --batch-size 32 --epochs 100 \
 	--opt adamw  --weight-decay 0.05 \
     --warmup-lr 1e-7 --warmup-epochs 10  \
