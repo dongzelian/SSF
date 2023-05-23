@@ -278,7 +278,7 @@ class Block(nn.Module):
             x = x + self.drop_path2(self.ls2(self.mlp(ssf_ada(self.norm2(x), self.ssf_scale_2, self.ssf_shift_2))))
         elif self.tuning_mode == 'ssffc':
             x = x + self.drop_path1(self.ls1(self.attn(self.ssffc_fc_1(ssf_ada(self.norm1(x), self.ssffc_scale_1, self.ssffc_shift_1)))))
-            x = x + self.drop_path2(self.ls2(self.mlp(self.ssffc_fc_2(ssf_ada(self.norm2(x), self.ssffc_scale_2, self.ssffc_shift_2))))))
+            x = x + self.drop_path2(self.ls2(self.mlp(self.ssffc_fc_2(ssf_ada(self.norm2(x), self.ssffc_scale_2, self.ssffc_shift_2)))))
         else:
             x = x + self.drop_path1(self.ls1(self.attn(self.norm1(x))))
             x = x + self.drop_path2(self.ls2(self.mlp(self.norm2(x))))
