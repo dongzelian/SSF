@@ -308,7 +308,10 @@ def create_optimizer_v2(
                 elif tuning_mode == 'ssf':
                     if "head." not in name and "ssf_scale" not in name and "ssf_shift_" not in name: 
                         param.requires_grad = False
-
+                elif tuning_mode == 'ssffc':
+                     if "head." not in name and "ssffc" not in name: 
+                        param.requires_grad = False
+                   
                 if param.requires_grad == True:
                     print(name)
                 
