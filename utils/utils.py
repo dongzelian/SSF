@@ -156,6 +156,6 @@ def init_params(net):
             init.constant(m.bias, 0)
         elif isinstance(m, nn.Linear):
             init.normal(m.weight, std=1e-3)
-            if m.bias:
+            if hasattr(m,'bias'):
                 init.constant(m.bias, 0)
 

@@ -311,7 +311,9 @@ def create_optimizer_v2(
                 elif tuning_mode == 'ssffc':
                      if "head." not in name and "ssffc" not in name: 
                         param.requires_grad = False
-                   
+                elif tuning_mode == 'tail_mlp':
+                    if "tail_mlp" not in name: 
+                        param.requires_grad = False
                 if param.requires_grad == True:
                     print(name)
                 
