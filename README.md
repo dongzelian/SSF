@@ -1,8 +1,6 @@
 # SSF for Efficient Model Tuning
 
-This repo is the official implementation of our NeurIPS2022 paper "Scaling & Shifting Your Features: A New Baseline for Efficient Model Tuning" ([arXiv](https://arxiv.org/abs/2210.08823)). 
-
-
+This repo is the duplicated version of the official implementation of our NeurIPS2022 paper "Scaling & Shifting Your Features: A New Baseline for Efficient Model Tuning" ([arXiv](https://arxiv.org/abs/2210.08823)). 
 
 
 ## Usage
@@ -12,40 +10,23 @@ This repo is the official implementation of our NeurIPS2022 paper "Scaling & Shi
 - Clone this repo:
 
 ```bash
-git clone https://github.com/dongzelian/SSF.git
+git clone https://github.com/dercaft/SSF.git
 cd SSF
 ```
 
 - Create a conda virtual environment and activate it:
 
 ```bash
-conda create -n ssf python=3.7 -y
+conda create -n ssf -f ssfn.yaml -y
 conda activate ssf
 ```
 
-- Install `CUDA==10.1` with `cudnn7` following
-  the [official installation instructions](https://docs.nvidia.com/cuda/cuda-installation-guide-linux/index.html)
-- Install `PyTorch==1.7.1` and `torchvision==0.8.2` with `CUDA==10.1`:
-
-```bash
-conda install pytorch==1.7.1 torchvision==0.8.2 cudatoolkit=10.1 -c pytorch
-```
-
-- Install `timm==0.6.5`:
-
-```bash
-pip install timm==0.6.5
-```
-
-
-- Install other requirements:
-
-```bash
-pip install -r requirements.txt
-```
-
-
 ### Data preparation
+
+MAC203服务器上有数据集，可以直接使用，不需要下载。
+路径: /data/VTAB/vtab-1k
+
+如果要自己下载，按以下步骤：
 
 - FGVC & vtab-1k
 
