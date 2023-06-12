@@ -46,6 +46,10 @@ from optim_factory import create_optimizer_v2, optimizer_kwargs
 
 from models import vision_transformer, swin_transformer, convnext, as_mlp
 
+## ADDED for Pruning
+import torch_pruning as tp
+from pruning.group_pruning import BNScalePruner, BNScaleImportance
+TH=0.01
 
 import ipdb
 
@@ -166,7 +170,7 @@ parser.add_argument('--layer-decay', type=float, default=None,
 
 # Learning rate schedule parameters
 parser.add_argument('--sched', default='cosine', type=str, metavar='SCHEDULER',
-                    help='LR scheduler (default: "step"')
+                    help='LR scheduler (default: "cosine"')
 parser.add_argument('--lr', type=float, default=0.05, metavar='LR',
                     help='learning rate (default: 0.05)')
 parser.add_argument('--lr-noise', type=float, nargs='+', default=None, metavar='pct, pct',
@@ -295,7 +299,7 @@ parser.add_argument('--seed', type=int, default=42, metavar='S',
                     help='random seed (default: 42)')
 parser.add_argument('--worker-seeding', type=str, default='all',
                     help='worker seed mode (default: all)')
-parser.add_argument('--log-interval', type=int, default=50, metavar='N',
+parser.add_argument('--log-interval', type=int, default=100, metavar='N',
                     help='how many batches to wait before logging training status')
 parser.add_argument('--recovery-interval', type=int, default=0, metavar='N',
                     help='how many batches to wait before writing recovery checkpoint')
@@ -334,6 +338,9 @@ parser.add_argument('--log-wandb', action='store_true', default=False,
 # ADD
 
 parser.add_argument('--no-save', action='store_true', default=False,)
+parser.add_argument('--zero_threshold', type=float, default=0.01,
+                    help='Threshold below which ssf weight will be zeroed out')
+parser.add_argument('--reg', type=float, default=1e-4,)
 
 def _parse_args():
     # Do we have a config file to parse?
@@ -440,6 +447,47 @@ def main():
         assert num_aug_splits > 1 or args.resplit
         model = convert_splitbn_model(model, max(num_aug_splits, 2))
 
+    # ADDED for Pruning
+
+    example_inputs = torch.rand(1, 3, args.img_size, args.img_size)
+    base_ops, base_params = tp.utils.count_ops_and_params(model, example_inputs=example_inputs)
+    unwrapped_parameters = (
+        [(model.pos_embed,0), (model.cls_token,0)] if "vit" in args.model else None
+    )
+    ignored_layers = []
+    ch_sparsity_dict = {}
+        
+    for n,m in model.named_modules():
+        if isinstance(m, torch.nn.Linear) and "head" in n :
+            ignored_layers.append(m)
+    round_to = None
+    if 'vit' in args.model:
+        # round_to = model.encoder.layers[0].num_heads
+        round_to = 12 # ADDED
+    SPARISTY=0.5
+    pruner = BNScalePruner(
+        model,
+        example_inputs,
+        importance=None, # 内部已定义
+        iterative_steps=args.epochs,
+        ch_sparsity=1.0,
+        ch_sparsity_dict=ch_sparsity_dict,
+        max_ch_sparsity=SPARISTY,
+        ignored_layers=ignored_layers,
+        round_to=round_to,
+        unwrapped_parameters=unwrapped_parameters,
+        reg=args.reg,
+        global_pruning=True
+    )
+    # print("CHECK IF ALL GROUPED")
+    # for group in pruner.DG.get_all_groups(ignored_layers=pruner.ignored_layers, root_module_types=pruner.root_module_types):
+    #     ch_groups = pruner.get_channel_groups(group)
+    #     imp = pruner.estimate_importance(group, ch_groups=ch_groups)
+    # exit()
+    regularizer=pruner.regularize
+    print("Params: {:.4f} M".format(base_params / 1e6))
+    print("ops: {:.4f} G".format(base_ops / 1e9))
+
     # move model to GPU, enable channels last layout if set
     model.cuda()
     if args.channels_last:
@@ -462,7 +510,8 @@ def main():
         assert not use_amp == 'apex', 'Cannot use APEX AMP with torchscripted model'
         assert not args.sync_bn, 'Cannot use SyncBatchNorm with torchscripted model'
         model = torch.jit.script(model)
-
+    ## ADDED for Pruning 
+    # Pruning 里有设置 weight_decay 的部分，但是是在有regularizer的情况下就设置为 0
     optimizer = create_optimizer_v2(model, **optimizer_kwargs(cfg=args))
 
     if args.local_rank == 0:
@@ -646,6 +695,7 @@ def main():
     saver = None
     output_dir = None
     if args.rank == 0:
+        decreasing = True if eval_metric == 'loss' else False
         if args.experiment:
             exp_name = args.experiment
         else:
@@ -655,7 +705,6 @@ def main():
                 str(data_config['input_size'][-1])
             ])
         output_dir = get_outdir(args.output if args.output else './output/train', exp_name)
-        decreasing = True if eval_metric == 'loss' else False
         if not args.no_save:
             saver = CheckpointSaver(
                 model=model, optimizer=optimizer, args=args, model_ema=model_ema, amp_scaler=loss_scaler,
@@ -664,6 +713,10 @@ def main():
             f.write(args_text)
 
     if args.evaluate:
+        for name, param in model.named_parameters():
+            if 'ssf_scale' in name or 'ssf_shift' in name:
+                param.data[torch.abs(param.data) < TH] = 0
+
         if args.distributed and args.dist_bn in ('broadcast', 'reduce'):
             if args.local_rank == 0:
                 _logger.info("Distributing BatchNorm running means and vars")
@@ -672,6 +725,10 @@ def main():
         eval_metrics = validate(model, loader_eval, validate_loss_fn, args, amp_autocast=amp_autocast)
 
         if model_ema is not None and not args.model_ema_force_cpu:
+            for name, param in model_ema.named_parameters():
+                if 'ssf_scale' in name or 'ssf_shift' in name:
+                    param.data[torch.abs(param.data) < TH] = 0
+
             if args.distributed and args.dist_bn in ('broadcast', 'reduce'):
                 distribute_bn(model_ema, args.world_size, args.dist_bn == 'reduce')
             ema_eval_metrics = validate(
@@ -681,18 +738,19 @@ def main():
             # save proper checkpoint with eval metric
             save_metric = eval_metrics[eval_metric]
             best_metric, best_epoch = saver.save_checkpoint(start_epoch, metric=save_metric)
-
         return
-        
     try:
         for epoch in range(start_epoch, num_epochs):
             if args.distributed and hasattr(loader_train.sampler, 'set_epoch'):
                 loader_train.sampler.set_epoch(epoch)
 
+            # ADDED for Pruning: add regularize.
             train_metrics = train_one_epoch(
                 epoch, model, loader_train, optimizer, train_loss_fn, args,
                 lr_scheduler=lr_scheduler, saver=saver, output_dir=output_dir,
-                amp_autocast=amp_autocast, loss_scaler=loss_scaler, model_ema=model_ema, mixup_fn=mixup_fn)
+                amp_autocast=amp_autocast, loss_scaler=loss_scaler, model_ema=model_ema, mixup_fn=mixup_fn,
+                regularizer=regularizer
+                )
 
             if args.distributed and args.dist_bn in ('broadcast', 'reduce'):
                 if args.local_rank == 0:
@@ -721,6 +779,58 @@ def main():
                 # save proper checkpoint with eval metric
                 save_metric = eval_metrics[eval_metric]
                 best_metric, best_epoch = saver.save_checkpoint(epoch, metric=save_metric)
+            elif args.rank == 0:
+                cmp= lambda x,y:x<y if decreasing else lambda x, y: x > y
+                if best_metric is not None:
+                    if best_metric[eval_metric] is not None and cmp(eval_metrics[eval_metric],best_metric[eval_metric]):
+                        best_metric = eval_metrics
+                        best_epoch = epoch
+                else:
+                    best_metric = eval_metrics
+                    best_epoch = epoch
+
+        # # ADDED for Pruning
+        # model = model.to('cpu')
+        # for name, param in model.named_parameters():
+        #     param.requires_grad = True
+        # print("Pruning model...")
+        # for group in pruner.DG.get_all_groups(ignored_layers=pruner.ignored_layers, root_module_types=pruner.root_module_types):
+        #     print(type(group))
+        # # for group in pruner.prune_local():
+        # #     print(type(group))
+        # model.eval()
+        # ori_ops, _ = tp.utils.count_ops_and_params(model, example_inputs=example_inputs)
+        # pruned_ops = ori_ops
+        # step=0
+        # while pruned_ops / ori_ops > 1-SPARISTY and step<=args.epochs:
+        #     print("Sparsity: {:.2f}%".format(100 * (1 - pruned_ops / ori_ops)))
+        #     pruner.step()
+        #     step+=1
+        #     # if 'vit' in args.model:
+        #     #     model.hidden_dim = model.conv_proj.out_channels
+        #     pruned_ops, _ = tp.utils.count_ops_and_params(model, example_inputs=example_inputs)
+            
+        # pruned_ops, pruned_size = tp.utils.count_ops_and_params(model, example_inputs=example_inputs)
+        # print("="*16)
+        # print("After pruning:")
+        # print(model)
+        # print("Params: {:.2f} M => {:.2f} M ({:.2f}%)".format(base_params / 1e6, pruned_size / 1e6, pruned_size / base_params * 100))
+        # print("Ops: {:.2f} G => {:.2f} G ({:.2f}%, {:.2f}X )".format(base_ops / 1e9, pruned_ops / 1e9, pruned_ops / base_ops * 100, base_ops / pruned_ops))
+        # print("="*16)
+        # print("PRUNED RESULTS:")
+        # # 
+
+        # Naive set ssf_scale and ssf_shift's values that small than TH to zero
+        if args.rank == 0:
+            total,pruned=0,0
+            for name, param in model.named_parameters():
+                if 'ssf_scale' in name or 'ssf_shift' in name:
+                    param.data[torch.abs(param.data) < TH] = 0
+                    total+=param.numel()
+                    pruned+=(param.data==0).sum().item()
+            eval_metrics = validate(model, loader_eval, validate_loss_fn, args, amp_autocast=amp_autocast)
+            _logger.info('*** Pruned results: {0}'.format(eval_metrics))
+            print("Pruned: {:.2f}%".format(100 * pruned / total))
 
     except KeyboardInterrupt:
         pass
@@ -731,7 +841,7 @@ def main():
 def train_one_epoch(
         epoch, model, loader, optimizer, loss_fn, args,
         lr_scheduler=None, saver=None, output_dir=None, amp_autocast=suppress,
-        loss_scaler=None, model_ema=None, mixup_fn=None):
+        loss_scaler=None, model_ema=None, mixup_fn=None,regularizer=None):
 
     if args.mixup_off_epoch and epoch >= args.mixup_off_epoch:
         if args.prefetcher and loader.mixup_enabled:
@@ -768,13 +878,30 @@ def train_one_epoch(
 
         optimizer.zero_grad()
         if loss_scaler is not None:
-            loss_scaler(
-                loss, optimizer,
-                clip_grad=args.clip_grad, clip_mode=args.clip_mode,
-                parameters=model_parameters(model, exclude_head='agc' in args.clip_mode),
-                create_graph=second_order)
+        # ADDED for Pruning: add regularize.
+            # loss_scaler(
+            #     loss, optimizer,
+            #     clip_grad=args.clip_grad, clip_mode=args.clip_mode,
+            #     parameters=model_parameters(model, exclude_head='agc' in args.clip_mode),
+            #     create_graph=second_order)
+
+            loss_scaler._scaler.scale(loss).backward(create_graph=second_order)
+            if args.clip_grad is not None:
+                assert model_parameters(model, exclude_head='agc' in args.clip_mode) is not None
+                loss_scaler._scaler.unscale_(optimizer)  # unscale the gradients of optimizer's assigned params in-place
+                dispatch_clip_grad(model_parameters(model, exclude_head='agc' in args.clip_mode), args.clip_grad, mode=args.clip_mode)
+            
+            if regularizer:
+                loss_scaler._scaler.unscale_(optimizer)
+                regularizer(model)
+            
+            loss_scaler._scaler.step(optimizer)
+            loss_scaler._scaler.update()      
+
         else:
             loss.backward(create_graph=second_order)
+            if regularizer:
+                regularizer(model)
             if args.clip_grad is not None:
                 dispatch_clip_grad(
                     model_parameters(model, exclude_head='agc' in args.clip_mode),
@@ -846,7 +973,13 @@ def validate(model, loader, loss_fn, args, amp_autocast=suppress, log_suffix='')
 
     end = time.time()
     last_idx = len(loader) - 1
-
+    # Naive sparsity caculation
+    total,pruned=0,0
+    for name, param in model.named_parameters():
+        if 'ssf_scale' in name or 'ssf_shift' in name:
+            total+=param.numel()
+            pruned+=(torch.abs(param.data) < TH).sum().item()
+    pruned=pruned/total
     with torch.no_grad():
         for batch_idx, (input, target) in enumerate(loader):
             last_batch = batch_idx == last_idx
@@ -898,8 +1031,19 @@ def validate(model, loader, loss_fn, args, amp_autocast=suppress, log_suffix='')
                         loss=losses_m, top1=top1_m, top5=top5_m))
                 # # ADD
                 # if
+    if args.local_rank == 0:
+        whole_time=batch_time_m.sum
+        log_name = 'Test' + log_suffix
+        _logger.info(
+            '{0}: [Whole Val]  '
+            'Time: {whole_time:.3f}  '
+            'Loss: {loss.avg:>6.4f}  '
+            'Acc@1: {top1.avg:>7.4f} '
+            'Pruned: {pruned:.2f}% '.format(
+                log_name, whole_time=whole_time,
+                loss=losses_m, top1=top1_m, pruned=pruned*100))
 
-    metrics = OrderedDict([('loss', losses_m.avg), ('top1', top1_m.avg), ('top5', top5_m.avg)])
+    metrics = OrderedDict([('loss', losses_m.avg), ('top1', top1_m.avg), ('top5', top5_m.avg),('pruned',pruned)])
     
     return metrics
 

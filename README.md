@@ -70,7 +70,21 @@ wget https://www.cs.toronto.edu/~kriz/cifar-100-python.tar.gz
 
 Prepare [ImageNet-A](https://github.com/hendrycks/natural-adv-examples), [ImageNet-R](https://github.com/hendrycks/imagenet-r) and [ImageNet-C](https://zenodo.org/record/2235448#.Y04cBOxByFw) for evaluation.
 
+### Log 注意事项：
 
+```python
+  _logger.info(
+      '{0}: [{1:>4d}/{2}]  '
+      'Time: {batch_time.val:.3f} ({batch_time.avg:.3f})  '
+      'Loss: {loss.val:>7.4f} ({loss.avg:>6.4f})  '
+      'Acc@1: {top1.val:>7.4f} ({top1.avg:>7.4f})  '
+      'Acc@5: {top5.val:>7.4f} ({top5.avg:>7.4f})'.format(
+          log_name, batch_idx, last_idx, batch_time=batch_time_m,
+          loss=losses_m, top1=top1_m, top5=top5_m))
+```
+这里每个 Acc@1/5: <log输出时，最后一个batch的准确率> (<整体平均的准确率>)
+
+所以会出现前面acc都高，但是括号里的acc比前面都低的情况。
 
 ### Pre-trained model preparation
 

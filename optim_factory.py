@@ -339,11 +339,6 @@ def create_optimizer_v2(
             weight_decay = 0.
         else:
             parameters = model_or_params.parameters()
-
-
-
-
-
     else:
         # iterable of parameters or param groups passed in
         parameters = model_or_params
