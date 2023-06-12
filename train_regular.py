@@ -821,14 +821,14 @@ def main():
         # # 
 
         # Naive set ssf_scale and ssf_shift's values that small than TH to zero
+        total,pruned=0,0
+        for name, param in model.named_parameters():
+            if 'ssf_scale' in name:# or 'ssf_shift' in name:
+                param.data[torch.abs(param.data) < TH] = 0
+                total+=param.numel()
+                pruned+=(param.data==0).sum().item()
+        eval_metrics = validate(model, loader_eval, validate_loss_fn, args, amp_autocast=amp_autocast)
         if args.rank == 0:
-            total,pruned=0,0
-            for name, param in model.named_parameters():
-                if 'ssf_scale' in name or 'ssf_shift' in name:
-                    param.data[torch.abs(param.data) < TH] = 0
-                    total+=param.numel()
-                    pruned+=(param.data==0).sum().item()
-            eval_metrics = validate(model, loader_eval, validate_loss_fn, args, amp_autocast=amp_autocast)
             _logger.info('*** Pruned results: {0}'.format(eval_metrics))
             print("Pruned: {:.2f}%".format(100 * pruned / total))
 
@@ -976,7 +976,7 @@ def validate(model, loader, loss_fn, args, amp_autocast=suppress, log_suffix='')
     # Naive sparsity caculation
     total,pruned=0,0
     for name, param in model.named_parameters():
-        if 'ssf_scale' in name or 'ssf_shift' in name:
+        if 'ssf_scale' in name: # or 'ssf_shift' in name:
             total+=param.numel()
             pruned+=(torch.abs(param.data) < TH).sum().item()
     pruned=pruned/total
