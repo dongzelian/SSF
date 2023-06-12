@@ -4,7 +4,7 @@ output/
 data/
 *.log
 *.csv
-
+DATA_PATH.sh
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]

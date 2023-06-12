@@ -22,9 +22,28 @@ conda activate ssf
 ```
 
 ### Data preparation
+在项目路径下，新建DATA_PATH.sh:
+```bash
+touch DATA_PATH.sh
+```
+DATA_PATH.sh内应是数据集路径以及要输出的log,checkpoint路径
+```bash
+export VTAB_PATH="<dataset_abspath>"
+export OUTPUT_PATH="<output_abspath>"
+
+```
 
 MAC203服务器上有数据集，可以直接使用，不需要下载。
-路径: /data/VTAB/vtab-1k
+
+数据集路径: /data/VTAB/vtab-1k
+
+输出路径为: ${OUTPUT_PATH}
+
+MAC235服务器上有数据集，可以直接使用，不需要下载。
+
+数据集路径: /media/disk1/VTAB/vtab-1k
+
+输出路径为: /media/disk1/wyh/SSF
 
 如果要自己下载，按以下步骤：
 

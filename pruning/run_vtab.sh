@@ -1,3 +1,4 @@
+source DATA_PATH.sh
 bash pruning/vtab/caltech101/train_ssf.sh $1 $2
 bash pruning/vtab/cifar_100/train_ssf.sh $1 $2
 bash pruning/vtab/clevr_count/train_ssf.sh $1 $2
