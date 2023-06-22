@@ -37,7 +37,7 @@ class BNScaleImportance(MagnitudeImportance):
         return group_imp
 
 
-class BNScalePruner(metapruner.MetaPruner):
+class SSFScalePruner(metapruner.MetaPruner):
     def __init__(
         self,
         model,
@@ -59,7 +59,7 @@ class BNScalePruner(metapruner.MetaPruner):
         self.module2name={module:name for name,module in model.named_modules()}
         self.parameter2name={parameter:name for name,parameter in model.named_parameters()}
         importance=BNScaleImportance(module2name=self.module2name,param2name=self.parameter2name)
-        super(BNScalePruner, self).__init__(
+        super(SSFScalePruner, self).__init__(
             model=model,
             example_inputs=example_inputs,
             importance=importance,
