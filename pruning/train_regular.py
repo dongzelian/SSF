@@ -48,7 +48,7 @@ from models import vision_transformer, swin_transformer, convnext, as_mlp
 
 ## ADDED for Pruning
 import torch_pruning as tp
-from pruning.group_pruning import BNScalePruner, BNScaleImportance
+from pruning.group_pruning import SSFScalePruner, BNScaleImportance
 TH=0.01
 
 import ipdb
@@ -465,7 +465,7 @@ def main():
         # round_to = model.encoder.layers[0].num_heads
         round_to = 12 # ADDED
     SPARISTY=0.5
-    pruner = BNScalePruner(
+    pruner = SSFScalePruner(
         model,
         example_inputs,
         importance=None, # 内部已定义
