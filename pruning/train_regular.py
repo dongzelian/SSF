@@ -14,10 +14,14 @@ NVIDIA CUDA specific speedups adopted from NVIDIA Apex examples
 
 Hacked together by / Copyright 2020 Ross Wightman (https://github.com/rwightman)
 """
+import os
+import sys
+
+sys.path.append(os.path.abspath(os.path.join(__file__, "..", "..")))
+
 import argparse
 import time
 import yaml
-import os
 import logging
 import numpy as np
 from collections import OrderedDict

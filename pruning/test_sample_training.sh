@@ -9,6 +9,7 @@ CUDA_VISIBLE_DEVICES=$1 python  -m torch.distributed.launch --nproc_per_node=$2 
     --drop-path 0 --img-size 224 \
 	--output  ${OUTPUT_PATH}/vit_base_patch16_224_in21k/cifar_100/pruning_sample \
 	--amp --tuning-mode ssf --pretrained --seed 1  \
-	--reg 1e-4\
+	--reg 1e-4 --no-save \
 	--model-ema --model-ema-decay 0.9  \
-    --sample_method random --sample_rate 0.5 \
+    --sample_method magnitude --sample_rate 0.5 --train_before_sample 5 \
+# magnitude random

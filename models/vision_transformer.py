@@ -152,13 +152,19 @@ class Mlp(nn.Module):
         if tuning_mode == 'ssf':        
             self.ssf_scale_1, self.ssf_shift_1 = init_ssf_scale_shift(hidden_features)
             self.ssf_scale_2, self.ssf_shift_2 = init_ssf_scale_shift(out_features)
-        # if tuning_mode =='ssffc':
+        # elif tuning_mode =='ssffc':
         #     self.ssffc_scale_1, self.ssffc_shift_1 = init_ssf_scale_shift(hidden_features)
         #     self.ssffc_scale_2, self.ssffc_shift_2 = init_ssf_scale_shift(out_features)
         #     self.ssffc_fc_1 = nn.Linear(hidden_features, hidden_features, bias=bias[0])
         #     self.ssffc_fc_2 = nn.Linear(out_features, out_features, bias=bias[1])
         #     self.ssffc_fc_1.reset_parameters()
         #     self.ssffc_fc_2.reset_parameters()
+        elif tuning_mode=='ssfmerge':
+            self.ssf_scale_1, self.ssf_shift_1 = init_ssf_scale_shift(hidden_features)
+            self.ssf_scale_2, self.ssf_shift_2 = init_ssf_scale_shift(out_features)
+            # Use pointwise convolution to merge outputs
+            self.merge1=nn.Conv2d(hidden_features, hidden_features, kernel_size=1, stride=1, padding=0, bias=False)
+            self.merge2=nn.Conv2d(out_features, out_features, kernel_size=1, stride=1, padding=0, bias=False)
 
     def forward(self, x):
         x = self.fc1(x)
@@ -200,7 +206,7 @@ class Attention(nn.Module):
         if tuning_mode == 'ssf':     
             self.ssf_scale_1, self.ssf_shift_1 = init_ssf_scale_shift(dim * 3)
             self.ssf_scale_2, self.ssf_shift_2 = init_ssf_scale_shift(dim)
-        # if tuning_mode =='ssffc':
+        # elif tuning_mode =='ssffc':
         #     bias = to_2tuple(False)
         #     self.ssffc_scale_1, self.ssffc_shift_1 = init_ssf_scale_shift(dim * 3)
         #     self.ssffc_scale_2, self.ssffc_shift_2 = init_ssf_scale_shift(dim)
@@ -208,6 +214,12 @@ class Attention(nn.Module):
         #     self.ssffc_fc_2 = nn.Linear(dim, dim, bias=bias[1])
         #     self.ssffc_fc_1.reset_parameters()
         #     self.ssffc_fc_2.reset_parameters()
+        elif tuning_mode=='ssfmerge':
+            self.ssf_scale_1, self.ssf_shift_1 = init_ssf_scale_shift(dim * 3)
+            self.ssf_scale_2, self.ssf_shift_2 = init_ssf_scale_shift(dim)
+            # Use pointwise convolution to merge outputs
+            self.merge1=nn.Conv2d(dim * 3, dim * 3, kernel_size=1, stride=1, padding=0, bias=False)
+            self.merge2=nn.Conv2d(dim, dim, kernel_size=1, stride=1, padding=0, bias=False)
 
 
     def forward(self, x):
@@ -268,7 +280,7 @@ class Block(nn.Module):
         if tuning_mode == 'ssf':     
             self.ssf_scale_1, self.ssf_shift_1 = init_ssf_scale_shift(dim)
             self.ssf_scale_2, self.ssf_shift_2 = init_ssf_scale_shift(dim)
-        if tuning_mode =='ssffc':
+        elif tuning_mode =='ssffc':
             bias = to_2tuple(False)
             self.ssffc_scale_1, self.ssffc_shift_1 = init_ssf_scale_shift(dim)
             self.ssffc_scale_2, self.ssffc_shift_2 = init_ssf_scale_shift(dim)
@@ -276,6 +288,12 @@ class Block(nn.Module):
             self.ssffc_fc_2 = nn.Linear(dim, dim, bias=bias[1])
             self.ssffc_fc_1.reset_parameters()
             self.ssffc_fc_2.reset_parameters()
+        elif tuning_mode=='ssfmerge':
+            self.ssf_scale_1, self.ssf_shift_1 = init_ssf_scale_shift(dim)
+            self.ssf_scale_2, self.ssf_shift_2 = init_ssf_scale_shift(dim)
+            # Use pointwise convolution to merge outputs
+            self.merge1=nn.Conv2d(dim, dim, kernel_size=1, stride=1, padding=0, bias=False)
+            self.merge2=nn.Conv2d(dim, dim, kernel_size=1, stride=1, padding=0, bias=False)
 
 
     def forward(self, x):
@@ -384,7 +402,7 @@ class PatchEmbed(nn.Module):
             if norm_layer:
                 self.ssf_scale_2, self.ssf_shift_2 = init_ssf_scale_shift(embed_dim)
 
-        if tuning_mode =='ssffc':
+        elif tuning_mode =='ssffc':
             bias = to_2tuple(False)
             self.ssffc_scale_1, self.ssffc_shift_1 = init_ssf_scale_shift(embed_dim)
             self.ssffc_fc_1 = nn.Linear(embed_dim, embed_dim, bias=bias[0])
@@ -393,6 +411,14 @@ class PatchEmbed(nn.Module):
                 self.ssffc_scale_2, self.ssffc_shift_2 = init_ssf_scale_shift(embed_dim)
                 self.ssffc_fc_2 = nn.Linear(embed_dim, embed_dim, bias=bias[1])
                 self.ssffc_fc_2.reset_parameters()
+        elif tuning_mode=='ssfmerge':
+            self.ssf_scale_1, self.ssf_shift_1 = init_ssf_scale_shift(embed_dim)
+            if norm_layer:
+                self.ssf_scale_2, self.ssf_shift_2 = init_ssf_scale_shift(embed_dim)
+            # Use pointwise convolution to merge outputs
+            self.merge1=nn.Conv2d(embed_dim, embed_dim, kernel_size=1, stride=1, padding=0, bias=False)
+            if norm_layer:
+                self.merge2=nn.Conv2d(embed_dim, embed_dim, kernel_size=1, stride=1, padding=0, bias=False)
 
     def forward(self, x):
         B, C, H, W = x.shape
@@ -503,12 +529,15 @@ class VisionTransformer(nn.Module):
         tuning_mode_list = [tuning_mode] * depth 
         if tuning_mode == 'ssf':     
             self.ssf_scale_1, self.ssf_shift_1 = init_ssf_scale_shift(self.num_features)
-        if tuning_mode =='ssffc':
+        elif tuning_mode =='ssffc':
             bias = to_1tuple(False)
             self.ssffc_scale_1, self.ssffc_shift_1 = init_ssf_scale_shift(embed_dim)
             self.ssffc_fc_1 = nn.Linear(embed_dim, embed_dim, bias=bias[0])
             self.ssffc_fc_1.reset_parameters()
-
+        elif tuning_mode=='ssfmerge':
+            # Use pointwise convolution to merge outputs
+            self.ssf_scale_1, self.ssf_shift_1 = init_ssf_scale_shift(self.num_features)
+            self.merge1=nn.Conv2d(embed_dim, embed_dim, kernel_size=1, stride=1, padding=0, bias=False)
 
         self.blocks = nn.Sequential(*[
             block_fn(
@@ -534,6 +563,17 @@ class VisionTransformer(nn.Module):
             nn.init.normal_(self.cls_token, std=1e-6)
         named_apply(get_init_weights_vit(mode, head_bias), self)
 
+    def init_merge_weights(self, mode=''):
+        # Merge pointwise conv weights are initialized to the ssf_scale and ssf_shift (y=ssf_scale*x+ssf_shift)
+        # initialize pointwise conv weight as normal
+        self.merge1.weight.data.normal_(std=0.02)
+        # Initialize the diagonal position of the Pointwise conv weight matrix to the corresponding ssf_Scale Weight
+        # and initialize the bias to the corresponding ssf_shift weight
+        self.merge1.weight.data.diagonal().copy_(self.ssf_scale_1)
+        self.merge1.bias.data.copy_(self.ssf_shift_1)
+
+        # self.merge1.weight.data.copy_(self.blocks[0].attn.proj.weight.data)
+        # self.merge1.bias.data
     def _init_weights(self, m):
         # this fn left here for compat with downstream users
         init_weights_vit_timm(m)

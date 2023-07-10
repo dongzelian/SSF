@@ -14,11 +14,15 @@ NVIDIA CUDA specific speedups adopted from NVIDIA Apex examples
 
 Hacked together by / Copyright 2020 Ross Wightman (https://github.com/rwightman)
 """
+import os
+import sys
+
+sys.path.append(os.path.abspath(os.path.join(__file__, "..", "..")))
+
 import argparse
 from functools import partial
 import time
 import yaml
-import os
 import logging
 import numpy as np
 from collections import OrderedDict
@@ -343,8 +347,8 @@ parser.add_argument('--zero_threshold', type=float, default=0.01,
                     help='Threshold below which ssf weight will be zeroed out')
 parser.add_argument('--reg', type=float, default=1e-4,)
 parser.add_argument('--sample_method', type=str, default="",)
-parser.add_argument('--sample_method', type=float, default=0.5,)
-
+parser.add_argument('--sample_rate', type=float, default=0.5,)
+parser.add_argument('--train_before_sample', type=int, default=0,)
 def _parse_args():
     # Do we have a config file to parse?
     args_config, remaining = config_parser.parse_known_args()
@@ -744,10 +748,32 @@ def main():
         return
     try:
         ## ADDED for sample&training
+
+        # ### Add few epoches to update a initial scale parameter
+        # def regularize(model):
+        #     # for m in model.modules():
+        #     #     if isinstance(m, (nn.BatchNorm1d, nn.BatchNorm2d, nn.BatchNorm3d)) and m.affine==True:
+        #     #         m.weight.grad.data.add_(self.reg*torch.sign(m.weight.data))
+        #     for j,(name,parameters) in enumerate(model.named_parameters()):
+        #         key=["ssf_scale","ssf_shift"]
+        #         if any([k in name for k in key]):
+        #             parameters.grad.data.add_(1e-4*torch.sign(parameters.data))
+        #             # QUESTION: 这种正则化的叠加是否和模型结构、回传梯度有关系, 直接从 torch-pruning 中拿过来的
+
+        old_lr=optimizer.param_groups[0]['lr']
+        optimizer.param_groups[0]['lr']=args.lr
+        for i in range(args.train_before_sample):
+            train_metrics = train_one_epoch(
+                0, model, loader_train, optimizer, train_loss_fn, args,
+                amp_autocast=amp_autocast, loss_scaler=loss_scaler, model_ema=model_ema, mixup_fn=mixup_fn,regularizer=regularizer
+                )
+        optimizer.param_groups[0]['lr']=old_lr
         mask_dict={}
         total,pruned=0,0
         for name, param in model.named_parameters():
-            if 'ssf_scale' in name:# or 'ssf_shift' in name:
+            if 'patch_embed' in name:
+                pass
+            elif 'ssf_scale' in name:# or 'ssf_shift' in name:
                 if args.sample_method=='random':
                     size=param.data.numel()
                     num=int(args.sample_rate*size)
@@ -762,6 +788,12 @@ def main():
                 total+=param.numel()
                 pruned+=(param.data==0).sum().item()
                 mask_dict[name]=(param.data==0)
+        if args.distributed and args.dist_bn in ('broadcast', 'reduce'):
+            if args.local_rank == 0:
+                _logger.info("Distributing BatchNorm running means and vars")
+            distribute_bn(model, args.world_size, args.dist_bn == 'reduce')
+
+        eval_metrics = validate(model, loader_eval, validate_loss_fn, args, amp_autocast=amp_autocast)
 
         if args.rank == 0:
             _logger.info('*** Pruned results: {0}'.format(eval_metrics))
