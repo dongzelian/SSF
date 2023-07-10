@@ -33,6 +33,8 @@ export OUTPUT_PATH="<output_abspath>"
 
 ```
 
+每个新建的训练脚本sh文件，开头都要 `source DATA_PATH.sh`!!!
+
 MAC203服务器上有数据集，可以直接使用，不需要下载。
 
 数据集路径: /data/VTAB/vtab-1k
