@@ -745,6 +745,7 @@ def main():
             best_metric, best_epoch = saver.save_checkpoint(start_epoch, metric=save_metric)
         return
     try:
+        model.tuning_mode = 'ssf'
         for epoch in range(start_epoch, num_epochs):
             if args.distributed and hasattr(loader_train.sampler, 'set_epoch'):
                 loader_train.sampler.set_epoch(epoch)
@@ -852,8 +853,11 @@ def main():
                     param.grad.data[mask_dict[name]]=0
                     param.data[mask_dict[name]]=0
         mask_func=partial(mask_para_grad,mask_dict=mask_dict)
+        
         lr_scheduler, num_epochs = create_scheduler(args, optimizer)
         start_epoch = 0
+        model.tuning_mode = 'ssfmerge'
+
         for epoch in range(start_epoch, num_epochs):
             if args.distributed and hasattr(loader_train.sampler, 'set_epoch'):
                 loader_train.sampler.set_epoch(epoch)
