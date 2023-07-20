@@ -788,7 +788,7 @@ def main():
         #     #     # save proper checkpoint with eval metric
         #     #     save_metric = eval_metrics[eval_metric]
         #     #     best_metric, best_epoch = saver.save_checkpoint(epoch, metric=save_metric)
-        #     if args.rank == 0:
+        #     if saver is None and args.rank == 0:
         #         cmp = lambda x, y : x < y if decreasing else lambda x, y : x > y
         #         if best_metric is not None:
         #             if best_metric[eval_metric] is not None and cmp(eval_metrics[eval_metric], best_metric[eval_metric]):
@@ -819,7 +819,7 @@ def main():
         #     #     model.hidden_dim = model.conv_proj.out_channels
         #     pruned_ops, _ = tp.utils.count_ops_and_params(model, example_inputs=example_inputs)
             
-        model_path = '/data/hjy/SSF/last.pth.tar'
+        model_path = '/data/hjy/SSF/conv-32.pth.tar'
         checkpoint = torch.load(model_path)
         model_state_dict = checkpoint['state_dict']
         model.load_state_dict(model_state_dict)
@@ -834,6 +834,10 @@ def main():
                 pruned+=(param.data==0).sum().item()
                 mask_dict[name]=(param.data==0)
         eval_metrics = validate(model, loader_eval, validate_loss_fn, args, amp_autocast=amp_autocast)
+        if output_dir is not None:
+            update_summary(
+                epoch=0, train_metrics=eval_metrics, eval_metrics=eval_metrics, filename=os.path.join(output_dir, 'summary.csv'),
+                write_header=best_metric is None, log_wandb=args.log_wandb and has_wandb)
 
         if args.rank == 0:
             _logger.info('*** Pruned results: {0}'.format(eval_metrics))
@@ -867,7 +871,7 @@ def main():
         lr_scheduler, num_epochs = create_scheduler(args, optimizer)
         start_epoch = 0
 
-        for epoch in range(start_epoch, num_epochs * 2):
+        for epoch in range(start_epoch, num_epochs):
             if args.distributed and hasattr(loader_train.sampler, 'set_epoch'):
                 loader_train.sampler.set_epoch(epoch)
 

@@ -842,6 +842,8 @@ def main():
         for name, module in model.named_modules():
             if hasattr(module, 'init_merge_weights'):
                 module.init_merge_weights()
+        
+        # 把ViT中forward的模块都调整为ssf_merge路线
         for name,module in model.named_modules():
             if hasattr(module, 'tuning_mode'):
                 module.tuning_mode = 'ssfmerge'
@@ -876,9 +878,11 @@ def main():
                     param.data[mask_dict[name]] = 0
         mask_func = partial(mask_para_grad, mask_dict=mask_dict)
         
+
+        optimizer = create_optimizer_v2(model, **optimizer_kwargs(cfg=args))
+
         lr_scheduler, num_epochs = create_scheduler(args, optimizer)
         start_epoch = 0
-        model.tuning_mode = 'ssfmerge'
 
         for epoch in range(start_epoch, num_epochs):
             if args.distributed and hasattr(loader_train.sampler, 'set_epoch'):
@@ -915,11 +919,11 @@ def main():
                     epoch, train_metrics, eval_metrics, os.path.join(output_dir, 'summary.csv'),
                     write_header=best_metric is None, log_wandb=args.log_wandb and has_wandb)
 
-            if saver is not None:
-                # save proper checkpoint with eval metric
-                save_metric = eval_metrics[eval_metric]
-                best_metric, best_epoch = saver.save_checkpoint(epoch, metric=save_metric)
-            elif args.rank == 0:
+            # if saver is not None:
+            #     # save proper checkpoint with eval metric
+            #     save_metric = eval_metrics[eval_metric]
+            #     best_metric, best_epoch = saver.save_checkpoint(epoch, metric=save_metric)
+            if saver is None and args.rank == 0:
                 cmp= lambda x,y:x<y if decreasing else lambda x, y: x > y
                 if best_metric is not None:
                     if best_metric[eval_metric] is not None and cmp(eval_metrics[eval_metric],best_metric[eval_metric]):
