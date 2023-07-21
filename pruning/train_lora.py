@@ -818,11 +818,11 @@ def main():
         #     # if 'vit' in args.model:
         #     #     model.hidden_dim = model.conv_proj.out_channels
         #     pruned_ops, _ = tp.utils.count_ops_and_params(model, example_inputs=example_inputs)
-            
-        model_path = '/data/hjy/SSF/conv-32.pth.tar'
+
+        model_path = '/data/wyh/SSF/last.pth.tar'
         checkpoint = torch.load(model_path)
         model_state_dict = checkpoint['state_dict']
-        model.load_state_dict(model_state_dict)
+        model.load_state_dict(model_state_dict, strict=False)
 
         # Naive set ssf_scale and ssf_shift's values that small than TH to zero
         mask_dict={}

@@ -163,8 +163,8 @@ class Mlp(nn.Module):
             self.ssf_scale_1, self.ssf_shift_1 = init_ssf_scale_shift(hidden_features)
             self.ssf_scale_2, self.ssf_shift_2 = init_ssf_scale_shift(out_features)
             # Use pointwise convolution to merge outputs
-            self.merge1=nn.Conv2d(hidden_features, hidden_features, kernel_size=1, stride=1, padding=0, bias=False)
-            self.merge2=nn.Conv2d(out_features, out_features, kernel_size=1, stride=1, padding=0, bias=False)
+            self.merge1=nn.Conv1d(hidden_features, hidden_features, kernel_size=1, stride=1, padding=0, bias=True)
+            self.merge2=nn.Conv1d(out_features, out_features, kernel_size=1, stride=1, padding=0, bias=True)
 
     def forward(self, x):
         x = self.fc1(x)
@@ -173,6 +173,10 @@ class Mlp(nn.Module):
         # if self.tuning_mode == 'ssffc':
         #     x = ssf_ada(x, self.ssffc_scale_1, self.ssffc_shift_1)
         #     x = self.ssffc_fc_1(x)
+        elif self.tuning_mode == 'ssfmerge':
+            x=x.permute(0,2,1)
+            x = self.merge1(x)
+            x=x.permute(0,2,1)
         x = self.act(x)
         x = self.drop1(x)
         x = self.fc2(x) 
@@ -181,6 +185,10 @@ class Mlp(nn.Module):
         # if self.tuning_mode == 'ssffc':
         #     x = self.ssffc_fc_2(x)
         #     x = ssf_ada(x, self.ssffc_scale_2, self.ssffc_shift_2)
+        elif self.tuning_mode == 'ssfmerge':
+            x=x.permute(0,2,1)
+            x = self.merge2(x)
+            x=x.permute(0,2,1)
         x = self.drop2(x)
         
         return x
@@ -218,8 +226,8 @@ class Attention(nn.Module):
             self.ssf_scale_1, self.ssf_shift_1 = init_ssf_scale_shift(dim * 3)
             self.ssf_scale_2, self.ssf_shift_2 = init_ssf_scale_shift(dim)
             # Use pointwise convolution to merge outputs
-            self.merge1=nn.Conv2d(dim * 3, dim * 3, kernel_size=1, stride=1, padding=0, bias=False)
-            self.merge2=nn.Conv2d(dim, dim, kernel_size=1, stride=1, padding=0, bias=False)
+            self.merge1=nn.Conv1d(dim * 3, dim * 3, kernel_size=1, stride=1, padding=0, bias=True)
+            self.merge2=nn.Conv1d(dim, dim, kernel_size=1, stride=1, padding=0, bias=True)
 
 
     def forward(self, x):
@@ -228,6 +236,12 @@ class Attention(nn.Module):
             qkv = (ssf_ada(self.qkv(x), self.ssf_scale_1, self.ssf_shift_1)).reshape(B, N, 3, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
         # elif self.tuning_mode == 'ssffc':
         #      qkv = (self.ssffc_fc_1(ssf_ada(self.qkv(x), self.ssffc_scale_1, self.ssffc_shift_1))).reshape(B, N, 3, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
+        elif self.tuning_mode == 'ssfmerge':
+            x=self.qkv(x)
+            x=x.permute(0,2,1)
+            x = self.merge1(x)
+            x=x.permute(0,2,1)
+            qkv = x.reshape(B, N, 3, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
         else:
             qkv = self.qkv(x).reshape(B, N, 3, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
         q, k, v = qkv.unbind(0)   # make torchscript happy (cannot use tensor as tuple)
@@ -243,6 +257,11 @@ class Attention(nn.Module):
         # elif self.tuning_mode == 'ssffc':
         #     x = self.ssffc_fc_2(x)
         #     x = ssf_ada(x, self.ssffc_scale_2, self.ssffc_shift_2)
+        elif self.tuning_mode == 'ssfmerge':
+            # print("DEBUG: 33333333333")
+            x=x.permute(0,2,1)
+            x = self.merge2(x)
+            x=x.permute(0,2,1)
         x = self.proj_drop(x)
         return x
 
@@ -292,8 +311,8 @@ class Block(nn.Module):
             self.ssf_scale_1, self.ssf_shift_1 = init_ssf_scale_shift(dim)
             self.ssf_scale_2, self.ssf_shift_2 = init_ssf_scale_shift(dim)
             # Use pointwise convolution to merge outputs
-            self.merge1=nn.Conv2d(dim, dim, kernel_size=1, stride=1, padding=0, bias=False)
-            self.merge2=nn.Conv2d(dim, dim, kernel_size=1, stride=1, padding=0, bias=False)
+            self.merge1=nn.Conv1d(dim, dim, kernel_size=1, stride=1, padding=0, bias=True)
+            self.merge2=nn.Conv1d(dim, dim, kernel_size=1, stride=1, padding=0, bias=True)
 
 
     def forward(self, x):
@@ -303,6 +322,11 @@ class Block(nn.Module):
         elif self.tuning_mode == 'ssffc':
             x = x + self.drop_path1(self.ls1(self.attn(self.ssffc_fc_1(ssf_ada(self.norm1(x), self.ssffc_scale_1, self.ssffc_shift_1)))))
             x = x + self.drop_path2(self.ls2(self.mlp(self.ssffc_fc_2(ssf_ada(self.norm2(x), self.ssffc_scale_2, self.ssffc_shift_2)))))
+        elif self.tuning_mode == 'ssfmerge':
+            x=self.merge1(self.norm1(x).permute(0,2,1)).permute(0,2,1)
+            x = x + self.drop_path1(self.ls1(self.attn(x)))
+            x=self.merge2(self.norm2(x).permute(0,2,1)).permute(0,2,1)
+            x = x + self.drop_path2(self.ls2(self.mlp(x)))
         else:
             x = x + self.drop_path1(self.ls1(self.attn(self.norm1(x))))
             x = x + self.drop_path2(self.ls2(self.mlp(self.norm2(x))))
@@ -416,9 +440,9 @@ class PatchEmbed(nn.Module):
             if norm_layer:
                 self.ssf_scale_2, self.ssf_shift_2 = init_ssf_scale_shift(embed_dim)
             # Use pointwise convolution to merge outputs
-            self.merge1=nn.Conv2d(embed_dim, embed_dim, kernel_size=1, stride=1, padding=0, bias=False)
+            self.merge1=nn.Conv1d(in_channels=embed_dim,out_channels=embed_dim, kernel_size=1, stride=1, padding=0, bias=True)
             if norm_layer:
-                self.merge2=nn.Conv2d(embed_dim, embed_dim, kernel_size=1, stride=1, padding=0, bias=False)
+                self.merge2=nn.Conv1d(in_channels=embed_dim,out_channels=embed_dim, kernel_size=1, stride=1, padding=0, bias=True)
 
     def forward(self, x):
         B, C, H, W = x.shape
@@ -440,6 +464,15 @@ class PatchEmbed(nn.Module):
                 x = self.ssffc_fc_2(ssf_ada(self.norm(x), self.ssffc_scale_2, self.ssffc_shift_2))
             else:
                 x = self.norm(x)
+        elif self.tuning_mode == 'ssfmerge':
+            x=x.permute(0,2,1)
+            x = self.merge1(x)
+            x=x.permute(0,2,1)
+            if self.norm_layer:
+                x=self.norm(x)
+                x=x.permute(0,2,1)
+                x = self.merge2(x)
+                x=x.permute(0,2,1)
 
         else:
             x = self.norm(x)
@@ -537,7 +570,7 @@ class VisionTransformer(nn.Module):
         elif tuning_mode=='ssfmerge':
             # Use pointwise convolution to merge outputs
             self.ssf_scale_1, self.ssf_shift_1 = init_ssf_scale_shift(self.num_features)
-            self.merge1=nn.Conv2d(embed_dim, embed_dim, kernel_size=1, stride=1, padding=0, bias=False)
+            self.merge1 = nn.Conv1d(embed_dim, embed_dim, kernel_size=1, stride=1, padding=0, bias=True)
 
         self.blocks = nn.Sequential(*[
             block_fn(
@@ -626,6 +659,10 @@ class VisionTransformer(nn.Module):
         elif self.tuning_mode =='ssffc':
             x= self.ssffc_fc_1(x)
             x = ssf_ada(x, self.ssffc_scale_1, self.ssffc_shift_1)
+        elif self.tuning_mode =='ssfmerge':
+            x=x.permute(0,2,1)
+            x = self.merge1(x)
+            x=x.permute(0,2,1)
         return x 
 
     def forward_head(self, x, pre_logits: bool = False):
