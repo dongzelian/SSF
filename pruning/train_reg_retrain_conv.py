@@ -493,12 +493,13 @@ def main():
         # for m in model.modules():
         #     if isinstance(m, (nn.BatchNorm1d, nn.BatchNorm2d, nn.BatchNorm3d)) and m.affine==True:
         #         m.weight.grad.data.add_(self.reg*torch.sign(m.weight.data))
-        for j,(name,parameters) in enumerate(model.named_parameters()):
+        for j, (name,parameters) in enumerate(model.named_parameters()):
             key=["ssf_scale","ssf_shift"]
             if any([k in name for k in key]):
-                parameters.grad.data.add_(args.reg*torch.sign(parameters.data))
+                parameters.grad.data.add_(args.reg * torch.sign(parameters.data))
                 # QUESTION: 这种正则化的叠加是否和模型结构、回传梯度有关系, 直接从 torch-pruning 中拿过来的
-    regularizer=regularize
+    regularizer = regularize
+
     print("Params: {:.4f} M".format(base_params / 1e6))
     print("ops: {:.4f} G".format(base_ops / 1e9))
 
@@ -754,10 +755,12 @@ def main():
             best_metric, best_epoch = saver.save_checkpoint(start_epoch, metric=save_metric)
         return
     try:
+        # 在正式开始训练之前调过tuning_mode
         for name,module in model.named_modules():
             if hasattr(module, 'tuning_mode'):
                 module.tuning_mode = 'ssf'
         # model.tuning_mode = 'ssfmerge'
+
         for epoch in range(start_epoch, num_epochs):
             if args.distributed and hasattr(loader_train.sampler, 'set_epoch'):
                 loader_train.sampler.set_epoch(epoch)
@@ -791,7 +794,7 @@ def main():
             if output_dir is not None:
                 update_summary(
                     epoch, train_metrics, eval_metrics, os.path.join(output_dir, 'summary.csv'),
-                    write_header=best_metric is None, log_wandb=args.log_wandb and has_wandb)
+                    write_header=best_metric is None, log_wandb=args.log_wandb and has_wandb, extra={'learning_rate': lr_scheduler._get_lr(epoch)})
 
             if saver is not None:
                 # save proper checkpoint with eval metric
@@ -884,7 +887,8 @@ def main():
         lr_scheduler, num_epochs = create_scheduler(args, optimizer)
         start_epoch = 0
 
-        for epoch in range(start_epoch, num_epochs):
+        # TODO: 暂时屏蔽了这边，只比较前半段
+        for epoch in range(start_epoch, start_epoch):
             if args.distributed and hasattr(loader_train.sampler, 'set_epoch'):
                 loader_train.sampler.set_epoch(epoch)
 

@@ -347,9 +347,6 @@ parser.add_argument('--no-save', action='store_true', default=False,)
 parser.add_argument('--zero_threshold', type=float, default=0.01,
                     help='Threshold below which ssf weight will be zeroed out')
 parser.add_argument('--reg', type=float, default=1e-4,)
-
-# LoRA
-parser.add_argument('--model-path', type=str, default='')
 parser.add_argument('--lora-rank', type=int, default=4,
                     help='LoRA_ViT\'s Rank')
 
@@ -474,7 +471,27 @@ def main():
     if 'vit' in args.model:
         # round_to = model.encoder.layers[0].num_heads
         round_to = 12 # ADDED
-
+    SPARISTY=0.5
+    pruner = SSFScalePruner(
+        model,
+        example_inputs,
+        importance=None, # 内部已定义
+        iterative_steps=args.epochs,
+        ch_sparsity=1.0,
+        ch_sparsity_dict=ch_sparsity_dict,
+        max_ch_sparsity=SPARISTY,
+        ignored_layers=ignored_layers,
+        round_to=round_to,
+        unwrapped_parameters=unwrapped_parameters,
+        reg=args.reg,
+        global_pruning=True
+    )
+    # print("CHECK IF ALL GROUPED")
+    # for group in pruner.DG.get_all_groups(ignored_layers=pruner.ignored_layers, root_module_types=pruner.root_module_types):
+    #     ch_groups = pruner.get_channel_groups(group)
+    #     imp = pruner.estimate_importance(group, ch_groups=ch_groups)
+    # exit()
+    regularizer=pruner.regularize
     print("Params: {:.4f} M".format(base_params / 1e6))
     print("ops: {:.4f} G".format(base_ops / 1e9))
 
@@ -731,58 +748,129 @@ def main():
         return
         
     try:
-        model.cuda()
-        model_path = args.model_path
+        
+        # for epoch in range(start_epoch, start_epoch + 1):
+        #     if args.distributed and hasattr(loader_train.sampler, 'set_epoch'):
+        #         loader_train.sampler.set_epoch(epoch)
+
+        #     # ADDED for Pruning: add regularize.
+        #     train_metrics = train_one_epoch(
+        #         epoch, model, loader_train, optimizer, train_loss_fn, args,
+        #         lr_scheduler=lr_scheduler, saver=saver, output_dir=output_dir,
+        #         amp_autocast=amp_autocast, loss_scaler=loss_scaler, model_ema=model_ema, mixup_fn=mixup_fn,
+        #         regularizer=regularizer
+        #         )
+
+        #     if args.distributed and args.dist_bn in ('broadcast', 'reduce'):
+        #         if args.local_rank == 0:
+        #             _logger.info("Distributing BatchNorm running means and vars")
+        #         distribute_bn(model, args.world_size, args.dist_bn == 'reduce')
+
+        #     eval_metrics = validate(model, loader_eval, validate_loss_fn, args, amp_autocast=amp_autocast)
+
+        #     if model_ema is not None and not args.model_ema_force_cpu:
+        #         if args.distributed and args.dist_bn in ('broadcast', 'reduce'):
+        #             distribute_bn(model_ema, args.world_size, args.dist_bn == 'reduce')
+        #         ema_eval_metrics = validate(
+        #             model_ema.module, loader_eval, validate_loss_fn, args, amp_autocast=amp_autocast, log_suffix=' (EMA)')
+        #         eval_metrics = ema_eval_metrics
+
+        #     if lr_scheduler is not None:
+        #         # step LR for next epoch
+        #         lr_scheduler.step(epoch + 1, eval_metrics[eval_metric])
+
+        #     if output_dir is not None:
+        #         update_summary(
+        #             epoch, train_metrics, eval_metrics, os.path.join(output_dir, 'summary.csv'),
+        #             write_header=best_metric is None, log_wandb=args.log_wandb and has_wandb)
+
+        #     # if saver is not None:
+        #     #     # save proper checkpoint with eval metric
+        #     #     save_metric = eval_metrics[eval_metric]
+        #     #     best_metric, best_epoch = saver.save_checkpoint(epoch, metric=save_metric)
+        #     if saver is None and args.rank == 0:
+        #         cmp = lambda x, y : x < y if decreasing else lambda x, y : x > y
+        #         if best_metric is not None:
+        #             if best_metric[eval_metric] is not None and cmp(eval_metrics[eval_metric], best_metric[eval_metric]):
+        #                 best_metric = eval_metrics
+        #                 best_epoch = epoch
+        #         else:
+        #             best_metric = eval_metrics
+        #             best_epoch = epoch
+
+        # # ADDED for Pruning
+        # model = model.to('cpu')
+        # for name, param in model.named_parameters():
+        #     param.requires_grad = True
+        # print("Pruning model...")
+        # for group in pruner.DG.get_all_groups(ignored_layers=pruner.ignored_layers, root_module_types=pruner.root_module_types):
+        #     print(type(group))
+        # # for group in pruner.prune_local():
+        # #     print(type(group))
+        # model.eval()
+        # ori_ops, _ = tp.utils.count_ops_and_params(model, example_inputs=example_inputs)
+        # pruned_ops = ori_ops
+        # step=0
+        # while pruned_ops / ori_ops > 1-SPARISTY and step<=args.epochs:
+        #     print("Sparsity: {:.2f}%".format(100 * (1 - pruned_ops / ori_ops)))
+        #     pruner.step()
+        #     step+=1
+        #     # if 'vit' in args.model:
+        #     #     model.hidden_dim = model.conv_proj.out_channels
+        #     pruned_ops, _ = tp.utils.count_ops_and_params(model, example_inputs=example_inputs)
+
+        model_path = '/data/wyh/SSF/retrain_v2_100.pth.tar'
         checkpoint = torch.load(model_path)
         model_state_dict = checkpoint['state_dict']
         model.load_state_dict(model_state_dict, strict=False)
 
-        num_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
-        print(f"trainable parameters: {num_params}") #trainable parameters: 86859496
-
         # Naive set ssf_scale and ssf_shift's values that small than TH to zero
-        # mask_dict={}
-        # total,pruned=0,0
-        # for name, param in model.named_parameters():
-        #     if 'ssf_scale' in name:# or 'ssf_shift' in name:
-        #         param.data[torch.abs(param.data) < TH] = 0
-        #         total+=param.numel()
-        #         pruned+=(param.data==0).sum().item()
-        #         mask_dict[name]=(param.data==0)
-
-        # def mask_para_grad(model, mask_dict):
-        #     for name, param in model.named_parameters():
-        #         if name in mask_dict:
-        #             # param.grad.data[mask_dict[name]]=0
-        #             param.data[mask_dict[name]]=0
-        # mask_func=partial(mask_para_grad,mask_dict=mask_dict)
-
-        # mask_func(model)
-
+        mask_dict={}
+        total,pruned=0,0
+        for name, param in model.named_parameters():
+            if 'ssf_scale' in name:# or 'ssf_shift' in name:
+                param.data[torch.abs(param.data) < TH] = 0
+                total+=param.numel()
+                pruned+=(param.data==0).sum().item()
+                mask_dict[name]=(param.data==0)
         eval_metrics = validate(model, loader_eval, validate_loss_fn, args, amp_autocast=amp_autocast)
         if output_dir is not None:
             update_summary(
                 epoch=0, train_metrics={}, eval_metrics=eval_metrics, filename=os.path.join(output_dir, 'summary.csv'),
                 write_header=best_metric is None, log_wandb=args.log_wandb and has_wandb)
 
-        # if args.rank == 0:
-        #     _logger.info('*** Pruned results: {0}'.format(eval_metrics))
-        #     print("Pruned: {:.2f}%".format(100 * pruned / total))
+        if args.rank == 0:
+            _logger.info('*** Pruned results: {0}'.format(eval_metrics))
+            print("Pruned: {:.2f}%".format(100 * pruned / total))
 
         # for j,(name,parameters) in enumerate(model.named_parameters()):
         #     key=["ssf_scale","ssf_shift"]
         #     if any([k in name for k in key]):
         #         parameters.grad.data.add_(self.reg*torch.sign(parameters.data))
-        #         # QUESTION: 这种正则化的叠加是否和模型结构、回传梯度有关系, 直接从 torch-pruning 中拿过来
+        #         # QUESTION: 这种正则化的叠加是否和模型结构、回传梯度有关系, 直接从 torch-pruning 中拿过来的
 
-        # LoRA_ViT初始化
-        model = LoRA_ViT_timm(model, r=args.lora_rank, num_classes=100).cuda()
-        if args.channels_last:
-            model = model.to(memory_format=torch.channels_last)
+        def mask_para_grad(model,mask_dict):
+            for name, param in model.named_parameters():
+                if name in mask_dict:
+                    # param.grad.data[mask_dict[name]]=0
+                    param.data[mask_dict[name]]=0
+        mask_func=partial(mask_para_grad,mask_dict=mask_dict)
 
-        num_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
-        print(f"trainable parameters: {num_params}") # trainable parameters: 147456
+        mask_func(model)
 
+        # # LoRA_ViT初始化
+        # model = LoRA_ViT_timm(model, r=args.lora_rank, num_classes=100)
+
+        # # 移到cuda
+        # model.cuda()
+        # if args.channels_last:
+        #     model = model.to(memory_format=torch.channels_last)
+        
+        # 全量重训练
+        for name, param in model.named_parameters():
+            param.requires_grad = True
+        
+        # args.lr, args.min_lr = 1e-3, 1e-6
         optimizer = create_optimizer_v2(model, **optimizer_kwargs(cfg=args))
         lr_scheduler, num_epochs = create_scheduler(args, optimizer)
         start_epoch = 0
@@ -790,17 +878,13 @@ def main():
         for epoch in range(start_epoch, num_epochs):
             if args.distributed and hasattr(loader_train.sampler, 'set_epoch'):
                 loader_train.sampler.set_epoch(epoch)
-            
-            for name, module in model.named_parameters():
-                if 'head' in name:
-                    print('DEBUG: ', module.requires_grad)
 
             # ADDED for Pruning: add regularize.
             train_metrics = train_one_epoch(
                 epoch, model, loader_train, optimizer, train_loss_fn, args,
                 lr_scheduler=lr_scheduler, saver=saver, output_dir=output_dir,
                 amp_autocast=amp_autocast, loss_scaler=loss_scaler, model_ema=model_ema, mixup_fn=mixup_fn,
-                regularizer=None # , ssf_mask=mask_func
+                regularizer=None, ssf_mask=mask_func
                 )
 
             if args.distributed and args.dist_bn in ('broadcast', 'reduce'):

@@ -173,10 +173,10 @@ class Mlp(nn.Module):
         # if self.tuning_mode == 'ssffc':
         #     x = ssf_ada(x, self.ssffc_scale_1, self.ssffc_shift_1)
         #     x = self.ssffc_fc_1(x)
-        elif self.tuning_mode == 'ssfmerge':
-            x=x.permute(0,2,1)
-            x = self.merge1(x)
-            x=x.permute(0,2,1)
+        # elif self.tuning_mode == 'ssfmerge':
+        #     x=x.permute(0,2,1)
+        #     x = self.merge1(x)
+        #     x=x.permute(0,2,1)
         x = self.act(x)
         x = self.drop1(x)
         x = self.fc2(x) 
@@ -185,10 +185,10 @@ class Mlp(nn.Module):
         # if self.tuning_mode == 'ssffc':
         #     x = self.ssffc_fc_2(x)
         #     x = ssf_ada(x, self.ssffc_scale_2, self.ssffc_shift_2)
-        elif self.tuning_mode == 'ssfmerge':
-            x=x.permute(0,2,1)
-            x = self.merge2(x)
-            x=x.permute(0,2,1)
+        # elif self.tuning_mode == 'ssfmerge':
+        #     x=x.permute(0,2,1)
+        #     x = self.merge2(x)
+        #     x=x.permute(0,2,1)
         x = self.drop2(x)
         
         return x
@@ -236,12 +236,12 @@ class Attention(nn.Module):
             qkv = (ssf_ada(self.qkv(x), self.ssf_scale_1, self.ssf_shift_1)).reshape(B, N, 3, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
         # elif self.tuning_mode == 'ssffc':
         #      qkv = (self.ssffc_fc_1(ssf_ada(self.qkv(x), self.ssffc_scale_1, self.ssffc_shift_1))).reshape(B, N, 3, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
-        elif self.tuning_mode == 'ssfmerge':
-            x=self.qkv(x)
-            x=x.permute(0,2,1)
-            x = self.merge1(x)
-            x=x.permute(0,2,1)
-            qkv = x.reshape(B, N, 3, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
+        # elif self.tuning_mode == 'ssfmerge':
+        #     x=self.qkv(x)
+        #     x=x.permute(0,2,1)
+        #     x = self.merge1(x)
+        #     x=x.permute(0,2,1)
+        #     qkv = x.reshape(B, N, 3, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
         else:
             qkv = self.qkv(x).reshape(B, N, 3, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
         q, k, v = qkv.unbind(0)   # make torchscript happy (cannot use tensor as tuple)
@@ -257,11 +257,10 @@ class Attention(nn.Module):
         # elif self.tuning_mode == 'ssffc':
         #     x = self.ssffc_fc_2(x)
         #     x = ssf_ada(x, self.ssffc_scale_2, self.ssffc_shift_2)
-        elif self.tuning_mode == 'ssfmerge':
-            # print("DEBUG: 33333333333")
-            x=x.permute(0,2,1)
-            x = self.merge2(x)
-            x=x.permute(0,2,1)
+        # elif self.tuning_mode == 'ssfmerge':
+        #     x=x.permute(0,2,1)
+        #     x = self.merge2(x)
+        #     x=x.permute(0,2,1)
         x = self.proj_drop(x)
         return x
 
@@ -322,11 +321,11 @@ class Block(nn.Module):
         elif self.tuning_mode == 'ssffc':
             x = x + self.drop_path1(self.ls1(self.attn(self.ssffc_fc_1(ssf_ada(self.norm1(x), self.ssffc_scale_1, self.ssffc_shift_1)))))
             x = x + self.drop_path2(self.ls2(self.mlp(self.ssffc_fc_2(ssf_ada(self.norm2(x), self.ssffc_scale_2, self.ssffc_shift_2)))))
-        elif self.tuning_mode == 'ssfmerge':
-            x=self.merge1(self.norm1(x).permute(0,2,1)).permute(0,2,1)
-            x = x + self.drop_path1(self.ls1(self.attn(x)))
-            x=self.merge2(self.norm2(x).permute(0,2,1)).permute(0,2,1)
-            x = x + self.drop_path2(self.ls2(self.mlp(x)))
+        # elif self.tuning_mode == 'ssfmerge':
+        #     x=self.merge1(self.norm1(x).permute(0,2,1)).permute(0,2,1)
+        #     x = x + self.drop_path1(self.ls1(self.attn(x)))
+        #     x=self.merge2(self.norm2(x).permute(0,2,1)).permute(0,2,1)
+        #     x = x + self.drop_path2(self.ls2(self.mlp(x)))
         else:
             x = x + self.drop_path1(self.ls1(self.attn(self.norm1(x))))
             x = x + self.drop_path2(self.ls2(self.mlp(self.norm2(x))))
@@ -464,15 +463,15 @@ class PatchEmbed(nn.Module):
                 x = self.ssffc_fc_2(ssf_ada(self.norm(x), self.ssffc_scale_2, self.ssffc_shift_2))
             else:
                 x = self.norm(x)
-        elif self.tuning_mode == 'ssfmerge':
-            x=x.permute(0,2,1)
-            x = self.merge1(x)
-            x=x.permute(0,2,1)
-            if self.norm_layer:
-                x=self.norm(x)
-                x=x.permute(0,2,1)
-                x = self.merge2(x)
-                x=x.permute(0,2,1)
+        # elif self.tuning_mode == 'ssfmerge':
+        #     x=x.permute(0,2,1)
+        #     x = self.merge1(x)
+        #     x=x.permute(0,2,1)
+        #     if self.norm_layer:
+        #         x=self.norm(x)
+        #         x=x.permute(0,2,1)
+        #         x = self.merge2(x)
+        #         x=x.permute(0,2,1)
 
         else:
             x = self.norm(x)
@@ -659,10 +658,10 @@ class VisionTransformer(nn.Module):
         elif self.tuning_mode =='ssffc':
             x= self.ssffc_fc_1(x)
             x = ssf_ada(x, self.ssffc_scale_1, self.ssffc_shift_1)
-        elif self.tuning_mode =='ssfmerge':
-            x=x.permute(0,2,1)
-            x = self.merge1(x)
-            x=x.permute(0,2,1)
+        # elif self.tuning_mode =='ssfmerge':
+        #     x=x.permute(0,2,1)
+        #     x = self.merge1(x)
+        #     x=x.permute(0,2,1)
         return x 
 
     def forward_head(self, x, pre_logits: bool = False):
