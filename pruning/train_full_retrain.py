@@ -347,6 +347,9 @@ parser.add_argument('--no-save', action='store_true', default=False,)
 parser.add_argument('--zero_threshold', type=float, default=0.01,
                     help='Threshold below which ssf weight will be zeroed out')
 parser.add_argument('--reg', type=float, default=1e-4,)
+
+# LoRA
+parser.add_argument('--model-path', type=str, default='')
 parser.add_argument('--lora-rank', type=int, default=4,
                     help='LoRA_ViT\'s Rank')
 
@@ -819,7 +822,7 @@ def main():
         #     #     model.hidden_dim = model.conv_proj.out_channels
         #     pruned_ops, _ = tp.utils.count_ops_and_params(model, example_inputs=example_inputs)
 
-        model_path = '/data/wyh/SSF/retrain_v2_100.pth.tar'
+        model_path = args.model_path
         checkpoint = torch.load(model_path)
         model_state_dict = checkpoint['state_dict']
         model.load_state_dict(model_state_dict, strict=False)

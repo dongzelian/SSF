@@ -737,27 +737,24 @@ def main():
         model_state_dict = checkpoint['state_dict']
         model.load_state_dict(model_state_dict, strict=False)
 
-        num_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
-        print(f"trainable parameters: {num_params}") #trainable parameters: 86859496
-
         # Naive set ssf_scale and ssf_shift's values that small than TH to zero
-        # mask_dict={}
-        # total,pruned=0,0
-        # for name, param in model.named_parameters():
-        #     if 'ssf_scale' in name:# or 'ssf_shift' in name:
-        #         param.data[torch.abs(param.data) < TH] = 0
-        #         total+=param.numel()
-        #         pruned+=(param.data==0).sum().item()
-        #         mask_dict[name]=(param.data==0)
+        mask_dict = {}
+        total, pruned = 0, 0
+        for name, param in model.named_parameters():
+            if 'ssf_scale' in name: # or 'ssf_shift' in name:
+                param.data[torch.abs(param.data) < TH] = 0
+                total += param.numel()
+                pruned += (param.data == 0).sum().item()
+                mask_dict[name] = (param.data == 0)
 
-        # def mask_para_grad(model, mask_dict):
-        #     for name, param in model.named_parameters():
-        #         if name in mask_dict:
-        #             # param.grad.data[mask_dict[name]]=0
-        #             param.data[mask_dict[name]]=0
-        # mask_func=partial(mask_para_grad,mask_dict=mask_dict)
+        def mask_para_grad(model, mask_dict):
+            for name, param in model.named_parameters():
+                if name in mask_dict:
+                    # param.grad.data[mask_dict[name]]=0
+                    param.data[mask_dict[name]]=0
+        mask_func=partial(mask_para_grad,mask_dict=mask_dict)
 
-        # mask_func(model)
+        mask_func(model)
 
         eval_metrics = validate(model, loader_eval, validate_loss_fn, args, amp_autocast=amp_autocast)
         if output_dir is not None:
@@ -780,9 +777,6 @@ def main():
         if args.channels_last:
             model = model.to(memory_format=torch.channels_last)
 
-        num_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
-        print(f"trainable parameters: {num_params}") # trainable parameters: 147456
-
         optimizer = create_optimizer_v2(model, **optimizer_kwargs(cfg=args))
         lr_scheduler, num_epochs = create_scheduler(args, optimizer)
         start_epoch = 0
@@ -790,10 +784,6 @@ def main():
         for epoch in range(start_epoch, num_epochs):
             if args.distributed and hasattr(loader_train.sampler, 'set_epoch'):
                 loader_train.sampler.set_epoch(epoch)
-            
-            for name, module in model.named_parameters():
-                if 'head' in name:
-                    print('DEBUG: ', module.requires_grad)
 
             # ADDED for Pruning: add regularize.
             train_metrics = train_one_epoch(
