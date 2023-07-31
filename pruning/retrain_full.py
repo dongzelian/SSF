@@ -370,6 +370,12 @@ def _parse_args():
     return args, args_text
 
 
+def get_parameter_number(model):
+    total_num = sum(p.numel() for p in model.parameters())
+    trainable_num = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    return {'Total': total_num, 'Trainable': trainable_num}
+
+
 def main():
     setup_default_logging()
     args, args_text = _parse_args()
@@ -877,6 +883,8 @@ def main():
         optimizer = create_optimizer_v2(model, **optimizer_kwargs(cfg=args))
         lr_scheduler, num_epochs = create_scheduler(args, optimizer)
         start_epoch = 0
+
+        print(get_parameter_number(model))
 
         for epoch in range(start_epoch, num_epochs):
             if args.distributed and hasattr(loader_train.sampler, 'set_epoch'):
