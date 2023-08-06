@@ -341,11 +341,13 @@ parser.add_argument('--log-wandb', action='store_true', default=False,
                     help='log training and validation metrics to wandb')
 
 # ADD
-
 parser.add_argument('--no-save', action='store_true', default=False,)
 parser.add_argument('--zero_threshold', type=float, default=0.01,
                     help='Threshold below which ssf weight will be zeroed out')
 parser.add_argument('--reg', type=float, default=1e-4,)
+
+# Standard Model
+parser.add_argument('--model-path', type=str, default='')
 
 def _parse_args():
     # Do we have a config file to parse?
@@ -429,7 +431,28 @@ def main():
         scriptable=args.torchscript,
         checkpoint_path=args.initial_checkpoint,
         tuning_mode=args.tuning_mode)
+    
+    baseline_model = create_model(
+        args.model,
+        pretrained=args.pretrained,
+        num_classes=args.num_classes,
+        drop_rate=args.drop,
+        drop_connect_rate=args.drop_connect,  # DEPRECATED, use drop_path
+        drop_path_rate=args.drop_path,
+        drop_block_rate=args.drop_block,
+        global_pool=args.gp,
+        bn_momentum=args.bn_momentum,
+        bn_eps=args.bn_eps,
+        scriptable=args.torchscript,
+        checkpoint_path=args.initial_checkpoint,
+        tuning_mode=args.tuning_mode)
 
+    
+    baseline_model.cuda()
+    model_path = args.model_path
+    checkpoint = torch.load(model_path)
+    model_state_dict = checkpoint['state_dict']
+    baseline_model.load_state_dict(model_state_dict, strict=False)
     
     if args.num_classes is None:
         assert hasattr(model, 'num_classes'), 'Model must have `num_classes` attr if not set on cmd line/config.'
@@ -469,7 +492,9 @@ def main():
     if 'vit' in args.model:
         # round_to = model.encoder.layers[0].num_heads
         round_to = 12 # ADDED
-    SPARISTY=0.5
+
+    # SPARISTY=0.5
+
     # pruner = SSFScalePruner(
     #     model,
     #     example_inputs,
@@ -484,11 +509,14 @@ def main():
     #     reg=args.reg,
     #     global_pruning=True
     # )
-    # # print("CHECK IF ALL GROUPED")
-    # # for group in pruner.DG.get_all_groups(ignored_layers=pruner.ignored_layers, root_module_types=pruner.root_module_types):
-    # #     ch_groups = pruner.get_channel_groups(group)
-    # #     imp = pruner.estimate_importance(group, ch_groups=ch_groups)
-    # # exit()
+
+    # print("CHECK IF ALL GROUPED")
+    # for group in pruner.DG.get_all_groups(ignored_layers=pruner.ignored_layers, root_module_types=pruner.root_module_types):
+    #     ch_groups = pruner.get_channel_groups(group)
+    #     imp = pruner.estimate_importance(group, ch_groups=ch_groups)
+    # exit()
+    # regularizer=pruner.regularize
+
     def regularize(model):
         # for m in model.modules():
         #     if isinstance(m, (nn.BatchNorm1d, nn.BatchNorm2d, nn.BatchNorm3d)) and m.affine==True:
@@ -496,7 +524,7 @@ def main():
         for j, (name,parameters) in enumerate(model.named_parameters()):
             key=["ssf_scale","ssf_shift"]
             if any([k in name for k in key]):
-                parameters.grad.data.add_(args.reg * torch.sign(parameters.data))
+                parameters.grad.data.add_(args.reg*torch.sign(parameters.data))
                 # QUESTION: 这种正则化的叠加是否和模型结构、回传梯度有关系, 直接从 torch-pruning 中拿过来的
     regularizer = regularize
 
@@ -578,11 +606,11 @@ def main():
             # Apex DDP preferred unless native amp is activated
             if args.local_rank == 0:
                 _logger.info("Using NVIDIA APEX DistributedDataParallel.")
-            model = ApexDDP(model, delay_allreduce=True, find_unused_parameters=True)
+            model = ApexDDP(model, delay_allreduce=True)
         else:
             if args.local_rank == 0:
                 _logger.info("Using native Torch DistributedDataParallel.")
-            model = NativeDDP(model, device_ids=[args.local_rank], broadcast_buffers=not args.no_ddp_bb, find_unused_parameters=True)
+            model = NativeDDP(model, device_ids=[args.local_rank], broadcast_buffers=not args.no_ddp_bb)
         # NOTE: EMA model does not need to be wrapped by DDP
 
     # setup learning rate schedule and starting epoch
@@ -635,6 +663,7 @@ def main():
     train_interpolation = args.train_interpolation
     if args.no_aug or not train_interpolation:
         train_interpolation = data_config['interpolation']
+
     loader_train = create_loader(
         dataset_train,
         input_size=data_config['input_size'],
@@ -665,7 +694,6 @@ def main():
         use_multi_epochs_loader=args.use_multi_epochs_loader,
         worker_seeding=args.worker_seeding,
     )
-
 
     loader_eval = create_loader(
         dataset_eval,
@@ -754,20 +782,15 @@ def main():
             save_metric = eval_metrics[eval_metric]
             best_metric, best_epoch = saver.save_checkpoint(start_epoch, metric=save_metric)
         return
+    
     try:
-        # 在正式开始训练之前调过tuning_mode
-        for name,module in model.named_modules():
-            if hasattr(module, 'tuning_mode'):
-                module.tuning_mode = 'ssf'
-        # model.tuning_mode = 'ssfmerge'
-
         for epoch in range(start_epoch, num_epochs):
             if args.distributed and hasattr(loader_train.sampler, 'set_epoch'):
                 loader_train.sampler.set_epoch(epoch)
 
             # ADDED for Pruning: add regularize.
             train_metrics = train_one_epoch(
-                epoch, model, loader_train, optimizer, train_loss_fn, args,
+                epoch, model, baseline_model, loader_train, optimizer, train_loss_fn, args,
                 lr_scheduler=lr_scheduler, saver=saver, output_dir=output_dir,
                 amp_autocast=amp_autocast, loss_scaler=loss_scaler, model_ema=model_ema, mixup_fn=mixup_fn,
                 regularizer=regularizer
@@ -794,7 +817,7 @@ def main():
             if output_dir is not None:
                 update_summary(
                     epoch, train_metrics, eval_metrics, os.path.join(output_dir, 'summary.csv'),
-                    write_header=best_metric is None, log_wandb=args.log_wandb and has_wandb, extra={'learning_rate': lr_scheduler._get_lr(epoch)})
+                    write_header=best_metric is None, log_wandb=args.log_wandb and has_wandb)
 
             if saver is not None:
                 # save proper checkpoint with eval metric
@@ -810,137 +833,6 @@ def main():
                     best_metric = eval_metrics
                     best_epoch = epoch
 
-        # # ADDED for Pruning
-        # model = model.to('cpu')
-        # for name, param in model.named_parameters():
-        #     param.requires_grad = True
-        # print("Pruning model...")
-        # for group in pruner.DG.get_all_groups(ignored_layers=pruner.ignored_layers, root_module_types=pruner.root_module_types):
-        #     print(type(group))
-        # # for group in pruner.prune_local():
-        # #     print(type(group))
-        # model.eval()
-        # ori_ops, _ = tp.utils.count_ops_and_params(model, example_inputs=example_inputs)
-        # pruned_ops = ori_ops
-        # step=0
-        # while pruned_ops / ori_ops > 1-SPARISTY and step<=args.epochs:
-        #     print("Sparsity: {:.2f}%".format(100 * (1 - pruned_ops / ori_ops)))
-        #     pruner.step()
-        #     step+=1
-        #     # if 'vit' in args.model:
-        #     #     model.hidden_dim = model.conv_proj.out_channels
-        #     pruned_ops, _ = tp.utils.count_ops_and_params(model, example_inputs=example_inputs)
-            
-        # pruned_ops, pruned_size = tp.utils.count_ops_and_params(model, example_inputs=example_inputs)
-        # print("="*16)
-        # print("After pruning:")
-        # print(model)
-        # print("Params: {:.2f} M => {:.2f} M ({:.2f}%)".format(base_params / 1e6, pruned_size / 1e6, pruned_size / base_params * 100))
-        # print("Ops: {:.2f} G => {:.2f} G ({:.2f}%, {:.2f}X )".format(base_ops / 1e9, pruned_ops / 1e9, pruned_ops / base_ops * 100, base_ops / pruned_ops))
-        # print("="*16)
-        # print("PRUNED RESULTS:")
-        # # 
-
-        # Naive set ssf_scale and ssf_shift's values that small than TH to zero
-        for name, module in model.named_modules():
-            if hasattr(module, 'init_merge_weights'):
-                module.init_merge_weights()
-        
-        # 把ViT中forward的模块都调整为ssf_merge路线
-        for name,module in model.named_modules():
-            if hasattr(module, 'tuning_mode'):
-                module.tuning_mode = 'ssfmerge'
-
-        mask_dict={}
-        total,pruned=0,0
-        for name, param in model.named_parameters():
-            if 'ssf_scale' in name:# or 'ssf_shift' in name:
-                param.data[torch.abs(param.data) < TH] = 0
-                total+=param.numel()
-                pruned+=(param.data==0).sum().item()
-                mask_dict[name]=(param.data==0)
-        eval_metrics = validate(model, loader_eval, validate_loss_fn, args, amp_autocast=amp_autocast)
-
-        # print(mask_dict)
-        # exit()
-
-        if args.rank == 0:
-            _logger.info('*** Pruned results: {0}'.format(eval_metrics))
-            print("Pruned: {:.2f}%".format(100 * pruned / total))
-
-        # for j,(name,parameters) in enumerate(model.named_parameters()):
-        #     key=["ssf_scale","ssf_shift"]
-        #     if any([k in name for k in key]):
-        #         parameters.grad.data.add_(self.reg*torch.sign(parameters.data))
-        #         # QUESTION: 这种正则化的叠加是否和模型结构、回传梯度有关系, 直接从 torch-pruning 中拿过来的
-
-        def mask_para_grad(model, mask_dict):
-            for name, param in model.named_parameters():
-                if name in mask_dict:
-                    param.grad.data[mask_dict[name]] = 0
-                    param.data[mask_dict[name]] = 0
-        mask_func = partial(mask_para_grad, mask_dict=mask_dict)
-        
-
-        optimizer = create_optimizer_v2(model, **optimizer_kwargs(cfg=args))
-
-        lr_scheduler, num_epochs = create_scheduler(args, optimizer)
-        start_epoch = 0
-
-        # TODO: 暂时屏蔽了这边，只比较前半段
-        for epoch in range(start_epoch, start_epoch):
-            if args.distributed and hasattr(loader_train.sampler, 'set_epoch'):
-                loader_train.sampler.set_epoch(epoch)
-
-            # ADDED for Pruning: add regularize.
-            train_metrics = train_one_epoch(
-                epoch, model, loader_train, optimizer, train_loss_fn, args,
-                lr_scheduler=lr_scheduler, saver=saver, output_dir=output_dir,
-                amp_autocast=amp_autocast, loss_scaler=loss_scaler, model_ema=model_ema, mixup_fn=mixup_fn,
-                regularizer=None, ssf_mask=mask_func
-                )
-
-            if args.distributed and args.dist_bn in ('broadcast', 'reduce'):
-                if args.local_rank == 0:
-                    _logger.info("Distributing BatchNorm running means and vars")
-                distribute_bn(model, args.world_size, args.dist_bn == 'reduce')
-
-            eval_metrics = validate(model, loader_eval, validate_loss_fn, args, amp_autocast=amp_autocast)
-
-            if model_ema is not None and not args.model_ema_force_cpu:
-                if args.distributed and args.dist_bn in ('broadcast', 'reduce'):
-                    distribute_bn(model_ema, args.world_size, args.dist_bn == 'reduce')
-                ema_eval_metrics = validate(
-                    model_ema.module, loader_eval, validate_loss_fn, args, amp_autocast=amp_autocast, log_suffix=' (EMA)')
-                eval_metrics = ema_eval_metrics
-
-            if lr_scheduler is not None:
-                # step LR for next epoch
-                lr_scheduler.step(epoch + 1, eval_metrics[eval_metric])
-
-            if output_dir is not None:
-                update_summary(
-                    epoch, train_metrics, eval_metrics, os.path.join(output_dir, 'summary.csv'),
-                    write_header=best_metric is None, log_wandb=args.log_wandb and has_wandb)
-
-            # if saver is not None:
-            #     # save proper checkpoint with eval metric
-            #     save_metric = eval_metrics[eval_metric]
-            #     best_metric, best_epoch = saver.save_checkpoint(epoch, metric=save_metric)
-            if saver is None and args.rank == 0:
-                cmp= lambda x,y:x<y if decreasing else lambda x, y: x > y
-                if best_metric is not None:
-                    if best_metric[eval_metric] is not None and cmp(eval_metrics[eval_metric],best_metric[eval_metric]):
-                        best_metric = eval_metrics
-                        best_epoch = epoch
-                else:
-                    best_metric = eval_metrics
-                    best_epoch = epoch
-        eval_metrics = validate(model, loader_eval, validate_loss_fn, args, amp_autocast=amp_autocast)
-        if args.rank == 0:
-            _logger.info('*** Pruned results: {0}'.format(eval_metrics))
-            print("Pruned: {:.2f}%".format(100 * pruned / total))
-
     except KeyboardInterrupt:
         pass
     if best_metric is not None:
@@ -948,7 +840,7 @@ def main():
 
 
 def train_one_epoch(
-        epoch, model, loader, optimizer, loss_fn, args,
+        epoch, model, baseline_model, loader, optimizer, loss_fn, args,
         lr_scheduler=None, saver=None, output_dir=None, amp_autocast=suppress,
         loss_scaler=None, model_ema=None, mixup_fn=None,regularizer=None,ssf_mask=None):
 
@@ -978,9 +870,44 @@ def train_one_epoch(
         if args.channels_last:
             input = input.contiguous(memory_format=torch.channels_last)
 
+        features_in_hook, features_out_hook = [], []
+        features_in_base, features_out_base = [], []
+
+        def hook(module, input, output):
+            features_in_hook.append(input)
+            features_out_hook.append(output)
+            return None
+        def hook_base(module, input, output):
+            features_in_base.append(input)
+            features_out_base.append(output)
+            return None
+
+        hooks = []
+        for (name, module) in model.named_modules():
+            if 'drop_path2' in name:
+                hook_pt = module.register_forward_hook(hook=hook)
+                hooks.append(hook_pt)
+        for (name, module) in baseline_model.named_modules():
+            if 'drop_path2' in name:
+                hook_pt = module.register_forward_hook(hook=hook_base)
+                hooks.append(hook_pt)
+
         with amp_autocast():
             output = model(input)
             loss = loss_fn(output, target)
+
+            baseline_output = baseline_model(input)
+            rec_loss = 0
+            for idx in range(len(features_out_hook)):
+                x_pruned = features_out_hook[idx]
+                x = features_out_base[idx]
+                rec_loss += (x_pruned - x).abs().pow(2).mean()
+            
+            # print(loss, rec_loss)
+            loss = loss + 0.05 * rec_loss
+            
+        for hook_pt in hooks:
+            hook_pt.remove()
 
         if not args.distributed:
             losses_m.update(loss.item(), input.size(0))

@@ -341,11 +341,13 @@ parser.add_argument('--log-wandb', action='store_true', default=False,
                     help='log training and validation metrics to wandb')
 
 # ADD
-
 parser.add_argument('--no-save', action='store_true', default=False,)
 parser.add_argument('--zero_threshold', type=float, default=0.01,
                     help='Threshold below which ssf weight will be zeroed out')
 parser.add_argument('--reg', type=float, default=1e-4,)
+
+# Standard Model
+parser.add_argument('--model-path', type=str, default='')
 
 def _parse_args():
     # Do we have a config file to parse?
@@ -429,7 +431,28 @@ def main():
         scriptable=args.torchscript,
         checkpoint_path=args.initial_checkpoint,
         tuning_mode=args.tuning_mode)
+    
+    standard_model = create_model(
+        args.model,
+        pretrained=args.pretrained,
+        num_classes=args.num_classes,
+        drop_rate=args.drop,
+        drop_connect_rate=args.drop_connect,  # DEPRECATED, use drop_path
+        drop_path_rate=args.drop_path,
+        drop_block_rate=args.drop_block,
+        global_pool=args.gp,
+        bn_momentum=args.bn_momentum,
+        bn_eps=args.bn_eps,
+        scriptable=args.torchscript,
+        checkpoint_path=args.initial_checkpoint,
+        tuning_mode=args.tuning_mode)
 
+    
+    standard_model.cuda()
+    model_path = args.model_path
+    checkpoint = torch.load(model_path)
+    model_state_dict = checkpoint['state_dict']
+    standard_model.load_state_dict(model_state_dict, strict=False)
     
     if args.num_classes is None:
         assert hasattr(model, 'num_classes'), 'Model must have `num_classes` attr if not set on cmd line/config.'
@@ -964,9 +987,26 @@ def train_one_epoch(
         if args.channels_last:
             input = input.contiguous(memory_format=torch.channels_last)
 
+        features_in_hook, features_out_hook = [], []
+        def hook(module, input, output):
+            features_in_hook.append(input)
+            features_out_hook.append(output)
+            return None
+
+        hooks = []
+        for (name, module) in model.named_modules():
+            if 'drop_path2' in name:
+                hook_pt = module.register_forward_hook(hook=hook)
+                hooks.append(hook_pt)
+
         with amp_autocast():
             output = model(input)
             loss = loss_fn(output, target)
+            
+            
+
+        for hook_pt in hooks:
+            hook_pt.remove()
 
         if not args.distributed:
             losses_m.update(loss.item(), input.size(0))
