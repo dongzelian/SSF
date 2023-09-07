@@ -55,7 +55,8 @@ from models.lora import LoRA_ViT_timm
 ## ADDED for Pruning
 import torch_pruning as tp
 from pruning.group_pruning import SSFScalePruner, BNScaleImportance
-TH=0.01
+
+TH = 0.05
 
 import ipdb
 
@@ -807,27 +808,6 @@ def main():
         #             best_metric = eval_metrics
         #             best_epoch = epoch
 
-        # # ADDED for Pruning
-        # model = model.to('cpu')
-        # for name, param in model.named_parameters():
-        #     param.requires_grad = True
-        # print("Pruning model...")
-        # for group in pruner.DG.get_all_groups(ignored_layers=pruner.ignored_layers, root_module_types=pruner.root_module_types):
-        #     print(type(group))
-        # # for group in pruner.prune_local():
-        # #     print(type(group))
-        # model.eval()
-        # ori_ops, _ = tp.utils.count_ops_and_params(model, example_inputs=example_inputs)
-        # pruned_ops = ori_ops
-        # step=0
-        # while pruned_ops / ori_ops > 1-SPARISTY and step<=args.epochs:
-        #     print("Sparsity: {:.2f}%".format(100 * (1 - pruned_ops / ori_ops)))
-        #     pruner.step()
-        #     step+=1
-        #     # if 'vit' in args.model:
-        #     #     model.hidden_dim = model.conv_proj.out_channels
-        #     pruned_ops, _ = tp.utils.count_ops_and_params(model, example_inputs=example_inputs)
-
         model_path = args.model_path
         checkpoint = torch.load(model_path)
         model_state_dict = checkpoint['state_dict']
@@ -875,16 +855,10 @@ def main():
         # if args.channels_last:
         #     model = model.to(memory_format=torch.channels_last)
         
-        # 全量重训练
-        for name, param in model.named_parameters():
-            param.requires_grad = True
-        
         # args.lr, args.min_lr = 1e-3, 1e-6
         optimizer = create_optimizer_v2(model, **optimizer_kwargs(cfg=args))
         lr_scheduler, num_epochs = create_scheduler(args, optimizer)
         start_epoch = 0
-
-        print(get_parameter_number(model))
 
         for epoch in range(start_epoch, num_epochs):
             if args.distributed and hasattr(loader_train.sampler, 'set_epoch'):

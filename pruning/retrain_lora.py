@@ -777,7 +777,7 @@ def main():
         #         # QUESTION: 这种正则化的叠加是否和模型结构、回传梯度有关系, 直接从 torch-pruning 中拿过来
 
         # LoRA_ViT初始化
-        model = LoRA_ViT_timm(model, r=args.lora_rank, num_classes=100).cuda()
+        model = LoRA_ViT_timm(model, r=args.lora_rank, num_classes=args.num_classes).cuda()
         if args.channels_last:
             model = model.to(memory_format=torch.channels_last)
 
@@ -876,9 +876,19 @@ def train_one_epoch(
                 input, target = mixup_fn(input, target)
         if args.channels_last:
             input = input.contiguous(memory_format=torch.channels_last)
+        
+        
+        # print(input.shape)
+        # print(target.shape)
+        # print('================================')
 
         with amp_autocast():
+            # print(input.shape)
             output = model(input)
+            # print(output)
+            # print(output.shape)
+            # print(target)
+            # print(target.shape)
             loss = loss_fn(output, target)
 
         if not args.distributed:

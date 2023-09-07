@@ -346,8 +346,10 @@ parser.add_argument('--zero_threshold', type=float, default=0.01,
                     help='Threshold below which ssf weight will be zeroed out')
 parser.add_argument('--reg', type=float, default=1e-4,)
 
-# Standard Model
-parser.add_argument('--model-path', type=str, default='')
+# Reconstruction Loss
+parser.add_argument('--model-path', type=str, default='',
+                    help='model used for calculating reconstruction loss')
+parser.add_argument('--rec', type=float, default=0.1)
 
 def _parse_args():
     # Do we have a config file to parse?
@@ -824,7 +826,7 @@ def main():
                 save_metric = eval_metrics[eval_metric]
                 best_metric, best_epoch = saver.save_checkpoint(epoch, metric=save_metric)
             elif args.rank == 0:
-                cmp= lambda x,y:x<y if decreasing else lambda x, y: x > y
+                cmp = lambda x, y : x < y if decreasing else lambda x, y: x > y
                 if best_metric is not None:
                     if best_metric[eval_metric] is not None and cmp(eval_metrics[eval_metric],best_metric[eval_metric]):
                         best_metric = eval_metrics
@@ -854,6 +856,7 @@ def train_one_epoch(
     batch_time_m = AverageMeter()
     data_time_m = AverageMeter()
     losses_m = AverageMeter()
+    rec_losses_m = AverageMeter()
 
     model.train()
 
@@ -904,13 +907,14 @@ def train_one_epoch(
                 rec_loss += (x_pruned - x).abs().pow(2).mean()
             
             # print(loss, rec_loss)
-            loss = loss + 0.05 * rec_loss
+            loss = loss + args.rec * rec_loss
             
         for hook_pt in hooks:
             hook_pt.remove()
 
         if not args.distributed:
             losses_m.update(loss.item(), input.size(0))
+            rec_losses_m.update(rec_loss.item(), input.size(0))
 
         optimizer.zero_grad()
         if loss_scaler is not None:
@@ -967,6 +971,8 @@ def train_one_epoch(
                 _logger.info(
                     'Train: {} [{:>4d}/{} ({:>3.0f}%)]  '
                     'Loss: {loss.val:#.4g} ({loss.avg:#.3g})  '
+                    'Rec_Loss: {rec_loss.val:#.4g} ({rec_loss.avg:#.3g})  '
+                    'Rec_Weight: {rec_weight:#.2f}  '
                     'Time: {batch_time.val:.3f}s, {rate:>7.2f}/s  '
                     '({batch_time.avg:.3f}s, {rate_avg:>7.2f}/s)  '
                     'LR: {lr:.3e}  '
@@ -975,6 +981,8 @@ def train_one_epoch(
                         batch_idx, len(loader),
                         100. * batch_idx / last_idx,
                         loss=losses_m,
+                        rec_loss=rec_losses_m,
+                        rec_weight=args.rec,
                         batch_time=batch_time_m,
                         rate=input.size(0) * args.world_size / batch_time_m.val,
                         rate_avg=input.size(0) * args.world_size / batch_time_m.avg,
@@ -1015,12 +1023,13 @@ def validate(model, loader, loss_fn, args, amp_autocast=suppress, log_suffix='')
     end = time.time()
     last_idx = len(loader) - 1
     # Naive sparsity caculation
-    total,pruned=0,0
+    total, pruned = 0, 0
     for name, param in model.named_parameters():
         if 'ssf_scale' in name: # or 'ssf_shift' in name:
-            total+=param.numel()
-            pruned+=(torch.abs(param.data) < TH).sum().item()
-    pruned=pruned/total
+            total += param.numel()
+            pruned += (torch.abs(param.data) < TH).sum().item()
+    pruned = pruned / total
+
     with torch.no_grad():
         for batch_idx, (input, target) in enumerate(loader):
             last_batch = batch_idx == last_idx
@@ -1085,7 +1094,11 @@ def validate(model, loader, loss_fn, args, amp_autocast=suppress, log_suffix='')
                 loss=losses_m, top1=top1_m, pruned=pruned*100))
 
     metrics = OrderedDict([('loss', losses_m.avg), ('top1', top1_m.avg), ('top5', top5_m.avg),('pruned',pruned)])
-    
+
+    # TODO: DELETE
+    if pruned > 0.35:
+        exit()
+
     return metrics
 
 

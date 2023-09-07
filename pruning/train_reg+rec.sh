@@ -10,5 +10,6 @@ CUDA_VISIBLE_DEVICES=$1 python  -m torch.distributed.launch --nproc_per_node=$2 
 	--output  ${OUTPUT_PATH}/vit_base_patch16_224_in21k/cifar_100/pruning_rec_loss \
 	--amp --tuning-mode ssf --pretrained --seed 1  \
 	--reg 1e-4  \
-    --model-path /data/hjy/SSF/baseline-ssf-93.88.pth.tar
+    --rec 0.75   \
+    --model-path /data/hjy/SSF/baseline-ssf-93.88.pth.tar   
 	# --model-ema --model-ema-decay 0.9  \

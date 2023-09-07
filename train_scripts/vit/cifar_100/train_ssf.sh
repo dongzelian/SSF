@@ -1,6 +1,5 @@
-
 source DATA_PATH.sh
-CUDA_VISIBLE_DEVICES=0,1,2,3  python  -m torch.distributed.launch --nproc_per_node=4  --master_port=12346  \
+CUDA_VISIBLE_DEVICES=2  python  -m torch.distributed.launch --nproc_per_node=1  --master_port=12356  \
 	train.py ${CIFAR100_PATH}/ --dataset torch/cifar100 --num-classes 100 --model vit_base_patch16_224_in21k  \
     --batch-size 64 --epochs 100 \
 	--opt adamw  --weight-decay 0.05 \
