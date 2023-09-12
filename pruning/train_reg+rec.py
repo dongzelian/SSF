@@ -351,6 +351,10 @@ parser.add_argument('--model-path', type=str, default='',
                     help='model used for calculating reconstruction loss')
 parser.add_argument('--rec', type=float, default=0.1)
 
+# Dynamic TH
+parser.add_argument('--ratio5-epochs', type=int, default=10)
+
+
 def _parse_args():
     # Do we have a config file to parse?
     args_config, remaining = config_parser.parse_known_args()
@@ -786,16 +790,62 @@ def main():
         return
     
     try:
+        def get_pruned_ratio(model, TH_val):
+            mask_dict = {}
+
+            total, pruned = 0, 0
+
+            for name, param in model.named_parameters():
+                if 'ssf_scale' in name:# or 'ssf_shift' in name:
+                    # param.data[torch.abs(param.data) < TH_val] = 0
+                    total += param.numel()
+                    pruned += (torch.abs(param.data) < TH_val).sum().item()
+                    mask_dict[name] = torch.abs(param.data) < TH_val
+
+            return pruned / total, mask_dict
+        
+        def mask_para_grad(model, mask_dict):
+            for name, param in model.named_parameters():
+                if name in mask_dict:
+                    # param.grad.data[mask_dict[name]]=0
+                    param.data[mask_dict[name]] = 0
+
+        def adjust_TH_to_ratio(model, ratio):
+            # binary search
+            assert(0 <= ratio and ratio <= 1)
+            
+            mask_dict = {}
+            global TH
+            l, r = 0.00, 2.00
+            while abs(r - l) > 1e-5:
+                mid = (l + r) / 2
+                pruned_ratio, mid_dict = get_pruned_ratio(model, mid)
+                if pruned_ratio >= ratio:
+                    TH = mid
+                    mask_dict = mid_dict
+                    r = mid - 1e-5
+                else:
+                    l = mid + 1e-5
+            return mask_dict
+
+
         for epoch in range(start_epoch, num_epochs):
             if args.distributed and hasattr(loader_train.sampler, 'set_epoch'):
                 loader_train.sampler.set_epoch(epoch)
+
+            if True:
+                ratio = min(0.35, max(0, (epoch - args.warmup_epochs) // args.ratio5_epochs * 0.05))
+                mask_dict = adjust_TH_to_ratio(model, ratio)
+                print(ratio, TH)
+                mask_func = partial(mask_para_grad, mask_dict=mask_dict)
+                mask_func(model)
 
             # ADDED for Pruning: add regularize.
             train_metrics = train_one_epoch(
                 epoch, model, baseline_model, loader_train, optimizer, train_loss_fn, args,
                 lr_scheduler=lr_scheduler, saver=saver, output_dir=output_dir,
                 amp_autocast=amp_autocast, loss_scaler=loss_scaler, model_ema=model_ema, mixup_fn=mixup_fn,
-                regularizer=regularizer
+                regularizer=regularizer, ssf_mask=mask_func
                 )
 
             if args.distributed and args.dist_bn in ('broadcast', 'reduce'):
@@ -826,9 +876,9 @@ def main():
                 save_metric = eval_metrics[eval_metric]
                 best_metric, best_epoch = saver.save_checkpoint(epoch, metric=save_metric)
             elif args.rank == 0:
-                cmp = lambda x, y : x < y if decreasing else lambda x, y: x > y
+                cmp = lambda x, y : x < y if decreasing else lambda x, y : x > y
                 if best_metric is not None:
-                    if best_metric[eval_metric] is not None and cmp(eval_metrics[eval_metric],best_metric[eval_metric]):
+                    if best_metric[eval_metric] is not None and cmp(eval_metrics[eval_metric], best_metric[eval_metric]):
                         best_metric = eval_metrics
                         best_epoch = epoch
                 else:
@@ -1094,10 +1144,6 @@ def validate(model, loader, loss_fn, args, amp_autocast=suppress, log_suffix='')
                 loss=losses_m, top1=top1_m, pruned=pruned*100))
 
     metrics = OrderedDict([('loss', losses_m.avg), ('top1', top1_m.avg), ('top5', top5_m.avg),('pruned',pruned)])
-
-    # TODO: DELETE
-    if pruned > 0.35:
-        exit()
 
     return metrics
 

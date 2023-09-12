@@ -1,4 +1,3 @@
-
 source DATA_PATH.sh
 CUDA_VISIBLE_DEVICES=$1 python  -m torch.distributed.launch --nproc_per_node=1  --master_port=$2  \
 	train.py ${VTAB_PATH}/cifar/  --dataset cifar100 --num-classes 100  --no-aug --direct-resize --model vit_base_patch16_224_in21k  \
