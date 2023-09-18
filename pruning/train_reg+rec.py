@@ -817,7 +817,7 @@ def main():
             mask_dict = {}
             global TH
             l, r = 0.00, 2.00
-            while abs(r - l) > 1e-5:
+            while l <= r:
                 mid = (l + r) / 2
                 pruned_ratio, mid_dict = get_pruned_ratio(model, mid)
                 if pruned_ratio >= ratio:
@@ -833,12 +833,11 @@ def main():
             if args.distributed and hasattr(loader_train.sampler, 'set_epoch'):
                 loader_train.sampler.set_epoch(epoch)
 
-            if True:
-                ratio = min(0.35, max(0, (epoch - args.warmup_epochs) // args.ratio5_epochs * 0.05))
-                mask_dict = adjust_TH_to_ratio(model, ratio)
-                print(ratio, TH)
-                mask_func = partial(mask_para_grad, mask_dict=mask_dict)
-                mask_func(model)
+            ratio = min(0.35, max(0, (epoch - args.warmup_epochs) // args.ratio5_epochs * 0.05))
+            mask_dict = adjust_TH_to_ratio(model, ratio)
+            print(ratio, TH)
+            mask_func = partial(mask_para_grad, mask_dict=mask_dict)
+            mask_func(model)
 
             # ADDED for Pruning: add regularize.
             train_metrics = train_one_epoch(
@@ -871,7 +870,7 @@ def main():
                     epoch, train_metrics, eval_metrics, os.path.join(output_dir, 'summary.csv'),
                     write_header=best_metric is None, log_wandb=args.log_wandb and has_wandb)
 
-            if saver is not None:
+            if saver is not None and ratio >= 0.35:
                 # save proper checkpoint with eval metric
                 save_metric = eval_metrics[eval_metric]
                 best_metric, best_epoch = saver.save_checkpoint(epoch, metric=save_metric)
