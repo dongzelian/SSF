@@ -80,7 +80,7 @@ def resize_pos_embed_nocls(posemb, posemb_new): # example: 224:(14x14+1)-> 384: 
     return posemb_grid
 
 
-def load_state_dict(checkpoint_path, model, use_ema=False, num_classes=1000, no_pos_embed=False):
+def load_state_dict(checkpoint_path,model, use_ema=False, num_classes=1000, no_pos_embed=False):
     if checkpoint_path and os.path.isfile(checkpoint_path):
         checkpoint = torch.load(checkpoint_path, map_location='cpu')
         state_dict_key = 'state_dict'
@@ -156,6 +156,6 @@ def init_params(net):
             init.constant(m.bias, 0)
         elif isinstance(m, nn.Linear):
             init.normal(m.weight, std=1e-3)
-            if hasattr(m,'bias'):
+            if m.bias:
                 init.constant(m.bias, 0)
 
