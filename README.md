@@ -1,6 +1,6 @@
 # SSF for Efficient Model Tuning
 
-This repo is the duplicated version of the official implementation of our NeurIPS2022 paper "Scaling & Shifting Your Features: A New Baseline for Efficient Model Tuning" ([arXiv](https://arxiv.org/abs/2210.08823)). 
+This branch is the duplicated version of the official implementation of the NeurIPS2022 paper "Scaling & Shifting Your Features: A New Baseline for Efficient Model Tuning" ([arXiv](https://arxiv.org/abs/2210.08823)). It was built by [dragonbra](https://github.com/dragonbra) and [dercaft](https://github.com/dercaft) to consider more functions. The owner of SSF only checked part of the code.
 
 
 ## Usage
