@@ -308,7 +308,12 @@ def create_optimizer_v2(
                 elif tuning_mode == 'ssf':
                     if "head." not in name and "ssf_scale" not in name and "ssf_shift_" not in name: 
                         param.requires_grad = False
-
+                elif tuning_mode == 'ssffc':
+                     if "head." not in name and "ssffc" not in name: 
+                        param.requires_grad = False
+                elif tuning_mode == 'tail_mlp':
+                    if "tail_mlp" not in name: 
+                        param.requires_grad = False
                 if param.requires_grad == True:
                     print(name)
                 
@@ -334,11 +339,6 @@ def create_optimizer_v2(
             weight_decay = 0.
         else:
             parameters = model_or_params.parameters()
-
-
-
-
-
     else:
         # iterable of parameters or param groups passed in
         parameters = model_or_params
