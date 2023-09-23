@@ -331,6 +331,9 @@ parser.add_argument('--use-multi-epochs-loader', action='store_true', default=Fa
 parser.add_argument('--log-wandb', action='store_true', default=False,
                     help='log training and validation metrics to wandb')
 
+# ADD
+
+parser.add_argument('--no-save', action='store_true', default=False,)
 
 def _parse_args():
     # Do we have a config file to parse?
@@ -394,8 +397,8 @@ def main():
     elif args.apex_amp or args.native_amp:
         _logger.warning("Neither APEX or native Torch AMP is available, using float32. "
                         "Install NVIDA apex or upgrade to PyTorch 1.6")
-
-    random_seed(args.seed, args.rank)
+    if args.seed >= 0:
+        random_seed(args.seed, args.rank)
 
     if args.fuser:
         set_jit_fuser(args.fuser)
@@ -653,9 +656,10 @@ def main():
             ])
         output_dir = get_outdir(args.output if args.output else './output/train', exp_name)
         decreasing = True if eval_metric == 'loss' else False
-        saver = CheckpointSaver(
-            model=model, optimizer=optimizer, args=args, model_ema=model_ema, amp_scaler=loss_scaler,
-            checkpoint_dir=output_dir, recovery_dir=output_dir, decreasing=decreasing, max_history=args.checkpoint_hist)
+        if not args.no_save:
+            saver = CheckpointSaver(
+                model=model, optimizer=optimizer, args=args, model_ema=model_ema, amp_scaler=loss_scaler,
+                checkpoint_dir=output_dir, recovery_dir=output_dir, decreasing=decreasing, max_history=args.checkpoint_hist)
         with open(os.path.join(output_dir, 'args.yaml'), 'w') as f:
             f.write(args_text)
 
@@ -892,6 +896,8 @@ def validate(model, loader, loss_fn, args, amp_autocast=suppress, log_suffix='')
                     'Acc@5: {top5.val:>7.4f} ({top5.avg:>7.4f})'.format(
                         log_name, batch_idx, last_idx, batch_time=batch_time_m,
                         loss=losses_m, top1=top1_m, top5=top5_m))
+                # # ADD
+                # if
 
     metrics = OrderedDict([('loss', losses_m.avg), ('top1', top1_m.avg), ('top5', top5_m.avg)])
     
